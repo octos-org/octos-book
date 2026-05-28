@@ -15,7 +15,8 @@ estimate: 1.5d
 
 ## 决策
 
-- 以 `../octos/crates/octos-agent/src/tools/registry.rs` 中的 `with_builtins_and_sandbox()` 作为基础工具层锚点
+- 以 `../octos/crates/octos-agent/src/tools/registry.rs` 中的 `with_builtins_and_permissions()` 作为基础工具层锚点
+- 明确覆盖 `../octos/crates/octos-cli/src/api/coding_tool_contract.rs` 中的 `coding.tool_contract.v1`、P0 required tools、tool status 和 capability 词汇
 - 明确区分基础注册、配置注入、chat 追加、gateway 追加、per-session 追加五层注册路径
 - `Tool` trait 以当前真实签名为准：`name`、`description`、`input_schema`、`tags`、`execute`、`as_any`
 - `ToolPolicy` 必须覆盖 `allow` / `deny` / `require_tags` 三维，并区分 `apply_policy` 与 `set_provider_policy`
@@ -56,9 +57,17 @@ estimate: 1.5d
 场景: ToolRegistry 的分层注册
   测试: review_ch06_registry_layers
   当 阅读注册机制小节
-  那么 解释了 `with_builtins_and_sandbox()` 的 15 个基础工具加 feature-gated 扩展
+  那么 解释了 `with_builtins_and_permissions()` 当前注册传统工具层、Codex-compatible coding 工具层、动态工具发现和 typed unsupported stub
   并且 区分了配置注入、chat 追加、gateway 追加、per-session 追加
   并且 明确说明 `tools/mod.rs` 导出列表不等于默认注册表
+
+场景: Codex-compatible coding 工具面
+  测试: review_ch06_coding_tool_contract
+  当 阅读注册机制和工具合约小节
+  那么 列出 `apply_patch`、`exec_command`、`write_stdin`、`update_plan`、`request_user_input`、`spawn_agent`、`send_input`、`resume_agent`、`wait_agent`、`close_agent` 这些 P0 required tools
+  并且 说明 `bash`、`delegate`、`view_image`、`tool_search`、`tool_suggest`、`image_generation` 的兼容层定位
+  并且 说明 `image_generation` 当前返回 typed unsupported 而不是已接入真实后端
+  并且 说明 model-visible `send_input` 当前不是实时子 Agent stdin，而是 supervisor metadata 记录
 
 场景: 混合曝光控制
   测试: review_ch06_activation_lru
@@ -81,6 +90,9 @@ estimate: 1.5d
   那么 解释了 deny-wins 的评估逻辑
   并且 展示了通配符匹配（`web_*`）的实现方向
   并且 覆盖 `group:fs/runtime/web/search/sessions/memory/research/admin/media/delegated`
+  并且 `group:fs` 包含 `apply_patch`
+  并且 `group:runtime` 包含 `exec_command`、`write_stdin`、`bash`
+  并且 `group:sessions` 包含 `spawn_agent`、`send_input`、`resume_agent`、`wait_agent`、`close_agent`、`delegate`
   并且 说明了 `require_tags` 与空标签工具的语义
 
 场景: 并发调度语义
@@ -114,5 +126,6 @@ estimate: 1.5d
   测试: review_ch06_drift_corrections
   当 阅读整章时
   那么 不再把工具系统写成固定的单一工具总数
+  并且 不再声称 `with_builtins_and_sandbox()` 注册 15 个基础工具
   并且 不再使用 `tools.byProvider` 这种过时配置字段
   并且 不再把 `spawn_only` 解释成 deferred / LRU 延迟池的一部分

@@ -16,6 +16,7 @@ estimate: 0.5d
 - 从 `Cargo.toml` workspace 和各 crate 的 `Cargo.toml` 自动提取依赖
 - Mermaid 格式绘制内部 crate 依赖图
 - 表格列出每个 crate 的关键外部依赖及版本
+- 说明 agent/goal/loop/coding autonomy 相关实现当前落在 `octos-cli` API runtime 和 `octos-agent` 工具/TaskSupervisor 层，不新增独立 crate
 
 ## 边界
 
@@ -36,6 +37,7 @@ estimate: 0.5d
   那么 11 个 octos-* crate 的内部依赖边与 `Cargo.toml` 一致
   并且 无遗漏或虚假的依赖
   并且 说明 app-skills / platform-skills 是 workspace 成员但不展开到核心 crate 图
+  并且 说明最新 autonomy 相关模块不应被画成不存在的 `octos-autonomy` crate
 
 场景: 外部依赖表完整
   测试: review_appendix_a_external

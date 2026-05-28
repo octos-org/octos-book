@@ -12,13 +12,16 @@ estimate: 1.5d
 paste-token）、Hooks 生命周期系统、Prometheus/UI Protocol/harness SSE/tracing 监控集成、AppUI UI Protocol 控制面、以及多租户配置。
 帮助运维和贡献者将 octos 部署到生产环境。当前主分支还引入了 UI Protocol
 capability negotiation、`/api/events/harness` typed SSE、Setup/Admin store
-和 harness event 控制面，本章需要把观测与控制的边界写清楚。
+和 harness event 控制面，本章需要把观测与控制的边界写清楚。最新主分支还加入
+coding/autonomy capability、agent lifecycle、goal/loop primitive 和 supervisor
+持久化/continuation 调度，本章需要明确这些是 orchestration substrate，而不是已完成的 self-evolving optimizer。
 
 ## 决策
 
 - 源码文件: `crates/octos-cli/src/auth/`, `crates/octos-agent/src/hooks.rs`
 - 辅助文件: `tenant.rs`, `monitor.rs`, API route 文件, `ui_protocol.rs`, `../octos/crates/octos-cli/src/api/events_harness.rs`, `../octos/crates/octos-cli/src/admin_token_store.rs`, `../octos/crates/octos-cli/src/smtp_secret_store.rs`, `../octos/crates/octos-cli/src/api/admin_setup.rs`
 - 图表: OAuth PKCE 流程图、Hooks 事件生命周期图、熔断器状态机、UI Protocol capability negotiation、Harness events observability layers、生产控制面总图
+- 图表还应覆盖 coding/autonomy 控制面：coding tool contract、AgentOrchestrator、TaskSupervisor、SupervisorStore、MasterContinuationScheduler
 - 工程决策侧栏: 为什么 hooks 用 exit code 而非 JSON 响应
 
 ## 边界
@@ -94,6 +97,15 @@ capability negotiation、`/api/events/harness` typed SSE、Setup/Admin store
   并且 说明发送 feature header 时未知 feature 会被丢弃
   并且 说明 `task/list`、`task/cancel`、`task/restart_from_node` 只在协商到 `harness.task_control.v1` 时出现在 `supported_methods`
   并且 包含 UI Protocol capability negotiation sequence diagram
+
+场景: Coding autonomy 控制面准确
+  测试: review_ch14_coding_autonomy_control_plane
+  当 阅读 Coding / Agent / Goal / Loop 控制面小节
+  那么 说明 `coding.tool_contract.v1`、`coding.autonomy.v1`、`coding.agent_control.v1`、`coding.goal_runtime.v1`、`coding.loop_runtime.v1` 的用途
+  并且 说明 agent/list、agent/status/read、agent/output/read、agent/artifact/list/read、session/goal/get/set/clear、loop/create/list 等方法受 capability gate 控制
+  并且 说明 `image_generation` 当前不作为真实可用能力广告
+  并且 说明 AgentOrchestrator、TaskSupervisor、SupervisorStore、MasterContinuationScheduler 的职责边界
+  并且 明确当前没有实现 DSPy/GEPA-style 自动 prompt/program optimizer 或完整 self-evolving runtime
 
 场景: harness events 与 tracing/metrics 边界
   测试: review_ch14_harness_events_observability

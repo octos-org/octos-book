@@ -14,6 +14,9 @@ octos-agent 是整个系统的心脏。本章聚焦 `agent/loop_runner.rs` 的�
 `HarnessError`、`LoopRetryState`、持久化 retry bucket 和 `CompactAndRetry`
 路径，本章需要把 Agent Loop 从“循环调用 LLM/工具”升级为 typed recovery
 state machine 的工程叙事。
+最新主分支还把 Codex-compatible coding tool contract 和 agent/goal/loop 控制面接入运行时；
+本章需要说明这些能力通过 ToolUse、supervisor 和 continuation scheduler 接入 Agent Loop，
+而不是把主循环改写成隐藏的 self-evolving multi-agent actor runtime。
 
 ## 决策
 
@@ -22,6 +25,7 @@ state machine 的工程叙事。
 - 源码走读: 以 `loop_runner.rs` 的主循环、`handle_loop_error_with_dispatch`、`PersistentRetryStateGuard` 为主，不再假设单一 `agent.rs` 承载完整 loop
 - 图表: Agent Loop 状态流转图（Mermaid）、stop_reason 决策树、`HarnessError -> RecoveryHint -> LoopDecision` state diagram
 - 事实边界: `ProviderUnavailable` 的 `RotateAndRetry` 当前没有 agent 内部 provider lane hook，书中必须说明当前 release 会 bail，lane rotation 由外层 provider chain 承担
+- 事实边界: autonomous coding 能力通过工具合约和受控 continuation 接入；不声称当前已实现 DSPy/GEPA-style self-evolving optimizer
 
 ## 边界
 
@@ -114,3 +118,11 @@ state machine 的工程叙事。
   那么 说明 `handle_loop_error_with_dispatch` 在 `CompactAndRetry` 分支调用 turn compaction helper
   并且 说明该路径是当前实现而非未来设计
   并且 指向 Ch8 展开 compaction policy 与 validator preservation
+
+场景: Coding harness 边界
+  测试: review_ch05_coding_harness_boundary
+  当 阅读 Agent Loop 与 coding harness 边界小节
+  那么 说明 `apply_patch`、`exec_command`、`update_plan`、`request_user_input`、`spawn_agent`、`wait_agent` 等工具通过普通 ToolUse 分支进入主循环
+  并且 说明后台完成、goal continue、loop fire 这类事件由 `TaskSupervisor`、`AgentOrchestrator`、`MasterContinuationScheduler` 安排后续 turn
+  并且 说明 session actor/supervisor 负责运行时所有权、取消、artifact 和 continuation
+  并且 不把当前实现写成完整 multi-agent runtime 或 self-evolving optimizer

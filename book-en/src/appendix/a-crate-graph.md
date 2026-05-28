@@ -2,6 +2,8 @@
 
 This appendix reflects the current `../octos` main branch and uses the workspace `Cargo.toml` files as the source of truth. The graph expands the 11 `octos-*` core crates. `app-skills` and `platform-skills` are also workspace members, but they are capability binaries rather than core library crates, so they are not expanded in the core dependency graph.
 
+One current nuance: the latest agent/goal/loop/coding autonomy work mostly lives inside `octos-cli` API runtime modules (`agent_orchestrator.rs`, `goal_loop_runtime.rs`, `master_continuation_scheduler.rs`, `supervisor_store.rs`) and the `octos-agent` tool/TaskSupervisor layer. It does not introduce a separate `octos-autonomy` crate. The crate graph therefore does not gain a new node for these capabilities; they sit on the existing `octos-cli -> octos-agent -> octos-core` runtime path.
+
 ## Internal Crate Dependency Topology
 
 ```mermaid

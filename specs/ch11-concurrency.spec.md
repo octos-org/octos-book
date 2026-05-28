@@ -9,15 +9,16 @@ estimate: 1d
 ## 意图
 
 octos 的并发模型是其性能和可靠性的基石。本章展示 session actor、
-actor 内部消息任务、信号量限流、工具并发执行和 TaskSupervisor 等机制如何协同工作，
+actor 内部消息任务、信号量限流、工具并发执行、TaskSupervisor 和 AgentOrchestrator 等机制如何协同工作，
 是 Rust 异步编程的生产级实战教材。当前主分支中 MCP server lifecycle、
 background spawn lifecycle、harness events 和 swarm dispatch 都复用或投射到这些
-生命周期概念，本章需要补足 `TaskSupervisor` 与 CLI/MCP/Harness 控制面的连接。
+生命周期概念，本章需要补足 `TaskSupervisor`、`AgentOrchestrator`、`SupervisorStore`
+与 CLI/MCP/Harness/AppUI 控制面的连接。
 
 ## 决策
 
 - 源码分散在多个 crate，以模式为主线而非文件为主线
-- 重点代码: session actor、Agent spawn 逻辑、join_all 工具并发、TaskSupervisor、MCP server lifecycle observer、AtomicBool 关停
+- 重点代码: session actor、Agent spawn 逻辑、join_all 工具并发、TaskSupervisor、AgentOrchestrator、SupervisorStore、MasterContinuationScheduler、MCP server lifecycle observer、AtomicBool 关停
 - 图表: 并发模型全景图（Mermaid）、消息处理并发/串行分界、Task lifecycle projection 图
 - 工程决策侧栏: 从共享 Mutex 到 Session Actor 的取舍
 
@@ -86,3 +87,13 @@ background spawn lifecycle、harness events 和 swarm dispatch 都复用或投�
   并且 说明外层 MCP caller 接收的是 session aggregate outcome，而不是内部工具事件流
   并且 说明 background spawn lifecycle 会通过 harness events / metrics 进入 operator 可观测面
   并且 包含 Task lifecycle projection Mermaid 图
+
+场景: AgentOrchestrator lifecycle projection
+  测试: review_ch11_agent_orchestrator
+  当 阅读 AgentOrchestrator 小节
+  那么 说明 `InProcessAgentOrchestrator` 如何把 `TaskSupervisor` background task mirror 成 agent state
+  并且 说明 `run_native_specialist` 会注册 native_agent、运行子 Agent、推送 output/artifact 并回写 supervisor
+  并且 说明 trait 默认 `spawn_agent` / `send_input` / `wait_agent` / `resume_agent` 并非所有实现都已生产接线
+  并且 说明 `SupervisorStore` 的 JSONL event ledger + snapshot 持久化职责
+  并且 说明 `MasterContinuationScheduler` 用 dedupe key 和优先级安排 child/goal/loop 后续 turn
+  并且 不把当前实现夸大成任意互联实时对话的完整 multi-agent society

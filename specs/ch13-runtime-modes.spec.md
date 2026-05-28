@@ -13,6 +13,8 @@ Feature Flags 形成完整的运行时体系。本章帮助用户和贡献者理
 运行模式以及配置变更如何传播。当前主分支中 `octos serve` 已经成为 AppState
 和控制面的汇聚点，`octos mcp-serve` 则把完整 octos session 暴露为一个
 coarse-grained MCP tool，本章需要避免把它们写成“chat 外壳”或“内部工具直出”。
+最新主分支还让 Serve 暴露 coding/autonomy capability 与 coding tool contract，
+本章需要把这些能力写入 Serve 的运行模式边界。
 
 ## 决策
 
@@ -21,6 +23,7 @@ coarse-grained MCP tool，本章需要避免把它们写成“chat 外壳”或�
 - 图表: 四种模式架构对比图、配置优先级链路、热加载流程、Serve control-plane composition、MCP serve session-level dispatch
 - 工程决策侧栏: 热加载 vs 全重启的边界划分
 - MCP Serve 边界: 只暴露 `run_octos_session`，不暴露 octos 内部 tool catalog
+- Serve coding/autonomy 边界: 暴露 `coding.tool_contract.v1`、agent control、goal/loop primitives，但仍是 backend-supervised orchestration
 
 ## 边界
 
@@ -82,6 +85,14 @@ coarse-grained MCP tool，本章需要避免把它们写成“chat 外壳”或�
   并且 说明 dashboard auth 可从 profile email config 推导
   并且 说明 swarm dispatch policy 从 `config.tool_policy` 和注入型环境变量 denylist 构建
   并且 包含 Serve control-plane composition Mermaid 图
+
+场景: Serve coding/autonomy capability
+  测试: review_ch13_serve_coding_autonomy
+  当 阅读 Serve 模式小节
+  那么 说明 UI Protocol `SessionOpened.capabilities` 可包含 `coding.tool_contract.v1`、`coding.autonomy.v1`、`coding.agent_control.v1`、`coding.goal_runtime.v1`、`coding.loop_runtime.v1`
+  并且 说明 coding tool contract 由后端根据当前 `ToolRegistry`、deferred tools、policy view 和 known model-visible tools 生成
+  并且 说明 AppUI 可以区分工具状态 `available`、`deferred`、`disabled_by_policy`、`missing`、`unimplemented`
+  并且 说明当前是 backend-supervised orchestration，不写成完整无人值守 self-evolving runtime
 
 场景: MCP Serve 是 session-level dispatch
   测试: review_ch13_mcp_serve_session_level

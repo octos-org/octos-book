@@ -2,6 +2,8 @@
 
 本附录以当前 `../octos` main 分支的 `Cargo.toml` 为准。图中展开 11 个 `octos-*` 核心 crate；`app-skills` 与 `platform-skills` 也是 workspace 成员，但它们是能力二进制程序，依赖形态更接近外部工具，故不展开到核心库依赖图中。
 
+需要注意：最新 agent/goal/loop/coding autonomy 相关实现主要落在 `octos-cli` 的 API runtime 模块（如 `agent_orchestrator.rs`、`goal_loop_runtime.rs`、`master_continuation_scheduler.rs`、`supervisor_store.rs`）和 `octos-agent` 的工具/TaskSupervisor 层，并没有新增独立 `octos-autonomy` crate。因此 crate 图不会因为这些能力出现新节点；它们是现有 `octos-cli -> octos-agent -> octos-core` 依赖链上的运行时模块。
+
 ## 内部 Crate 依赖拓扑
 
 ```mermaid

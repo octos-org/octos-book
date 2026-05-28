@@ -1,6 +1,29 @@
 # 附录 B：工具速查表
 
-本附录以当前 `../octos` main 分支的 `octos-agent/src/tools/`、`octos-agent/src/tools/policy.rs` 以及 CLI 运行时注册路径为准。octos 的工具不是一个固定的 14 项列表：基础 registry、feature flags、profile、Serve/Admin API、MCP、插件和 app-skills 都会影响最终暴露给 Agent 的工具集合。
+本附录以当前 `../octos` main 分支的 `octos-agent/src/tools/`、`octos-agent/src/tools/policy.rs`、`octos-cli/src/api/coding_tool_contract.rs` 以及 CLI 运行时注册路径为准。octos 的工具不是一个固定列表：基础 registry、Codex-compatible coding 合约、feature flags、profile、Serve/Admin API、MCP、插件和 app-skills 都会影响最终暴露给 Agent 的工具集合。
+
+## Codex-compatible 编码工具面
+
+这些工具由 `ToolRegistry::with_builtins_and_permissions()` 直接注册，并由 `coding.tool_contract.v1` 对 AppUI/模型声明。它们的定位是让 Octos 可以作为 autonomous coding harness 的后端工具面，而不是要求前端本地实现这些能力。
+
+| 工具名 | 分组 | 核心参数 | 功能 |
+|--------|------|---------|------|
+| `apply_patch` | `group:fs` | Codex patch envelope 或 `path, diff` | 应用补丁；写入受文件访问策略约束 |
+| `exec_command` | `group:runtime` | `cmd`, `workdir?`, `timeout_secs?`, `tty?`, `yield_time_ms?` | 执行命令；支持 PTY/长命令 session |
+| `write_stdin` | `group:runtime` | `session_id`, `chars` | 向 `exec_command` 启动的运行中 session 写入 stdin |
+| `bash` | `group:runtime` | `cmd` | Codex-compatible shell alias，共用 shell/exec policy 与 sandbox |
+| `update_plan` | - | `plan: array` | 写入结构化计划状态 |
+| `request_user_input` | - | `questions: array` | 请求用户输入，返回结构化 metadata |
+| `spawn_agent` | `group:sessions` | `task`, `role?`, `agent_type?` | 启动受监督的子 Agent；依赖运行时绑定 native spawn delegate |
+| `send_input` | `group:sessions` | `agent_id`, `input` | 当前记录到 supervisor metadata；不是实时 conversational delivery |
+| `resume_agent` | `group:sessions` | `agent_id` | 重新拉起/恢复受监督任务 |
+| `wait_agent` | `group:sessions` | `agent_id`, `timeout_ms?` | 等待子 Agent 进入终态或超时 |
+| `close_agent` | `group:sessions` | `agent_id` | 取消活跃受监督任务或关闭终态任务 |
+| `delegate` | `group:sessions` | `task`, `role?`, `timeout_ms?` | `spawn_agent` + `wait_agent` 的一调用封装 |
+| `view_image` | - | `path` | 工作区内图片元数据检查，不返回原始图片字节 |
+| `tool_search` | - | `query`, `limit?` | 从 live tool catalog 搜索可见工具 |
+| `tool_suggest` | - | `task`, `limit?` | 根据任务描述建议工具 |
+| `image_generation` | - | `prompt` | 当前仅返回 `coding_tool_unsupported`，尚未绑定生成后端 |
 
 ## 核心内置工具
 
@@ -27,7 +50,7 @@
 |--------|------|------|---------|------|
 | `git` | `git` feature | - | `command: string` | Git 操作与仓库查询 |
 | `code_structure` | `ast` feature | - | `path: string` | AST 代码结构分析 |
-| `deep_search` | bundled app skill / runtime | `group:research` | `query: string` | 深度网页研究 |
+| `search` | bundled app skill / runtime | `group:research` | `query: string` | 单 binary 研究流水线；旧文档中的 `deep_search` 是 contract/兼容别名 |
 | `synthesize_research` | runtime | `group:research` | `findings: array/object` | 综合研究结果 |
 | `deep_crawl` | bundled app skill / runtime | `group:research` | `url: string, max_depth?: int` | 深度爬取站点 |
 | `run_pipeline` | CLI/Gateway/Serve per-session | - | `dot: string` 或 pipeline 配置 | 执行 DOT 工作流 |
@@ -62,13 +85,13 @@
 
 | 分组名 | 包含工具 | 典型策略 |
 |--------|---------|---------|
-| `group:fs` | `read_file`, `write_file`, `edit_file`, `diff_edit` | 文件操作 |
-| `group:runtime` | `shell` | 命令执行 |
+| `group:fs` | `read_file`, `write_file`, `apply_patch`, `edit_file`, `diff_edit` | 文件操作 |
+| `group:runtime` | `shell`, `exec_command`, `write_stdin`, `bash` | 命令执行 |
 | `group:web` | `web_search`, `web_fetch`, `browser` | 网络操作 |
 | `group:search` | `glob`, `grep`, `list_dir` | 代码搜索 |
-| `group:sessions` | `spawn` | 后台任务 |
+| `group:sessions` | `spawn`, `spawn_agent`, `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `delegate` | 后台任务与子 Agent 生命周期 |
 | `group:memory` | `recall_memory`, `save_memory` | 记忆操作 |
-| `group:research` | `deep_search`, `synthesize_research`, `deep_crawl` | 深度研究 |
+| `group:research` | `search`, `synthesize_research`, `deep_crawl` | 深度研究 |
 | `group:admin` | `manage_skills`, `configure_tool`, `model_check` | 管理操作 |
 | `group:media` | `mofa_comic`, `mofa_slides`, `mofa_infographic`, `mofa_cards`, `fm_tts`, `fm_voice_list` | 媒体生成与语音 |
 | `group:delegated` | `delegate_task`, `spawn`, `send_message`, `message`, `save_memory`, `execute_code` | 委托子任务的 canonical deny list |
@@ -77,13 +100,13 @@
 
 ```json
 {
-  "tools": {
+  "tool_policy": {
     "allow": ["group:fs", "group:search", "shell"],
-    "deny": ["browser", "web_fetch"],
-    "byProvider": {
-      "ollama": {
-        "allow": ["read_file", "shell", "grep"]
-      }
+    "deny": ["browser", "web_fetch"]
+  },
+  "tool_policy_by_provider": {
+    "ollama": {
+      "allow": ["read_file", "shell", "grep"]
     }
   }
 }
