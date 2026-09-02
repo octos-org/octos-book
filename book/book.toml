@@ -1,7 +1,6 @@
 [book]
 authors = ["Zhang Alex"]
 language = "zh"
-multilingual = false
 src = "src"
 title = "构建 AI Agent OS：octos 架构与实现"
 description = "基于 octos 源码的 AI Agent 操作系统架构解析，DDIA 风格"

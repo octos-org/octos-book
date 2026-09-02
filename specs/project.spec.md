@@ -93,3 +93,11 @@ tags: [book, architecture, rust, ai-agent]
   那么 破折号「——」全篇不超过 2 处
   并且 不出现「值得注意的是」「众所周知」「综上所述」「总而言之」「赋能」「抓手」「闭环」「沉淀」「助力」
   并且 不出现自问自答式过渡句
+
+场景: mdbook 可构建且镜像同步
+  测试: review_project_mdbook_build
+  假设 任意一章交付后
+  当 在 book/ 目录运行 `mdbook build`
+  那么 构建成功且无 ERROR
+  并且 `chapters/chNN-*.md` 与 `book/src/partN/chNN.md` 内容一致
+  并且 新增或重编号的章节在 `book/src/SUMMARY.md` 中有对应条目
