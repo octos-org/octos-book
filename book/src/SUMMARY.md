@@ -40,6 +40,7 @@
 
 - [第 19 章：octoscode：终端客户端与 UI Protocol](./part4/ch19.md)
 - [第 20 章：OctoLoop：外环协议 OLP v2](./part4/ch20.md)
+- [第 21 章：herdr 与外环运维实务](./part4/ch21.md)
 
 ---
 
