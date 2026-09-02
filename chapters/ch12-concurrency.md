@@ -262,7 +262,7 @@ fleet 侧的租约语义值得在本章展开，因为它是「并发所有权�
 - 第 10 章：harness events 的完整事件 ABI，本章的 `McpServerCall` 是其中一个事件族。
 - 第 16 章：fleet 的 Lease/Attempt/Recovery 状态机全貌。
 - 第 18 章：goal 与 peer 的编排语义，`MasterContinuationScheduler` 的完整消费链。
-- Tokio 官方文档的 graceful shutdown 章节：` shutdown{} ` 模式的运行时级背景。
+- Tokio 官方文档 Graceful Shutdown 章节：运行时级优雅停机的任务取消与等待语义。
 
 ## 思考题
 
