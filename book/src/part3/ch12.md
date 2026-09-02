@@ -8,30 +8,30 @@
 
 | 层 | 文件数 | 行数 | 关键符号数 | 代表文件 |
 |---|---|---|---|---|
-| ① Tokio 层（session actor / 信号量 / 工具并发 / 关停） | 5 | 25154 | 170 | `session_actor.rs` 10094 行、`execution.rs` 4730 行 |
-| ② supervisor 层（`autonomy/` 十文件） | 10 | 45544 | 454 | `agent_orchestrator.rs` 33639 行、`supervisor_store.rs` 3277 行 |
-| ③ peer/lease 层 | 2 | 3994 | 98 | `peers/mod.rs` 3186 行、`octos-fleet/src/records.rs` 808 行 |
+| ① Tokio 层（session actor / 信号量 / 工具并发 / 关停） | 5 | 25154 | 170 | `crates/octos-cli/src/session_actor.rs` 10094 行、`crates/octos-agent/src/agent/execution.rs` 4730 行 |
+| ② supervisor 层（`autonomy/` 十文件） | 10 | 45544 | 454 | `crates/octos-cli/src/autonomy/agent_orchestrator.rs` 33639 行、`crates/octos-cli/src/autonomy/supervisor_store.rs` 3277 行 |
+| ③ peer/lease 层 | 2 | 3994 | 98 | `crates/octos-cli/src/peers/mod.rs` 3186 行、`crates/octos-fleet/src/records.rs` 808 行 |
 
 三个数字说明一件事：并发在 octos 里早已越过「怎么用 Tokio」的阶段。Tokio 层只占三分之一行数，真正的大头是 supervisor 层：4.5 万行代码在解决一个 Tokio 本身不管的问题：进程重启之后，编排状态怎么办。
 
 ```mermaid
 flowchart TB
     subgraph L3["③ peer/lease 层"]
-        PEERS["peers/mod.rs<br/>peer 暂存与寻址"]
-        LEASE["octos-fleet/records.rs<br/>Lease / Attempt 状态机"]
+        PEERS["crates/octos-cli/src/peers/mod.rs<br/>peer 暂存与寻址"]
+        LEASE["crates/octos-fleet/src/records.rs<br/>Lease / Attempt 状态机"]
     end
     subgraph L2["② supervisor 层（autonomy/，45544 行）"]
         STORE["SupervisorStore<br/>JSONL 事件账本 + snapshot"]
         SCHED["MasterContinuationScheduler<br/>dedupe + 优先级续跑"]
         ORCH["InProcessAgentOrchestrator"]
-        WAKE["fleet_wake.rs<br/>outbox 消费者"]
-        MON["monitor_runtime.rs<br/>零 token 监视器"]
+        WAKE["crates/octos-cli/src/autonomy/fleet_wake.rs<br/>outbox 消费者"]
+        MON["crates/octos-cli/src/autonomy/monitor_runtime.rs<br/>零 token 监视器"]
     end
     subgraph L1["① Tokio 层（25154 行）"]
-        GW["gateway_runtime.rs<br/>信号量限流"]
+        GW["crates/octos-cli/src/commands/gateway/gateway_runtime.rs<br/>信号量限流"]
         REG["ActorRegistry<br/>会话生命周期"]
         ACTOR["SessionActor ×N<br/>每会话一个 tokio task"]
-        TOOLS["execution.rs<br/>工具批次并发"]
+        TOOLS["crates/octos-agent/src/agent/execution.rs<br/>工具批次并发"]
         TS["TaskSupervisor<br/>spawn_only 状态"]
     end
     GW -->|"Semaphore permit"| REG --> ACTOR
@@ -142,7 +142,7 @@ pub enum TaskStatus {
 | Completed | Ready（经 Verifying） | 校验通过，产出可信 |
 | Failed | Failed | 执行失败 |
 | Cancelled | Cancelled | 用户主动取消 |
-| Parked | Cancelled（#27c 复用空闲投射槽，task_supervisor.rs:373） | 等待重连收养，非终态非活跃 |
+| Parked | Cancelled（#27c 复用空闲投射槽，crates/octos-agent/src/task_supervisor.rs:373） | 等待重连收养，非终态非活跃 |
 
 这个投射有两个消费面。MCP 侧：`octos mcp-serve` 只暴露一个工具 `run_octos_session`（`crates/octos-agent/src/mcp_server.rs:66`），会话派发通过 `SessionLifecycleObserver::mark_state`（`crates/octos-agent/src/mcp_server.rs:145`）上报 Queued → Running → Verifying → Ready/Failed 的迁移（trait 文档在 `:142-144`）；外层 MCP caller 最终收到的是会话级聚合结果（`final_state: TaskLifecycleState`，`:108`），不是内部工具事件流。Harness 侧：`McpServerCall` 事件携带 `outcome` 字段，取值 `ready/failed/queued/running/verifying`，与 `TaskLifecycleState` 一一对应（`crates/octos-agent/src/harness_events.rs:651-652`，事件变体定义见 `:397` 附近），后台任务的生命周期由此进入 harness events 与 metrics，成为 operator 可观测面的一部分。
 
@@ -154,7 +154,7 @@ Tokio task 活在进程里，进程一死全部蒸发。对「跑十分钟的工
 >
 > 一个长程目标（比如派 5 个 peer 各写一章）天然是多次进程生命周期的叠加：master 会重启，peer 会跑很久，结果会晚到。如果编排状态只存在于内存里的 task 树，重启即失忆，唯一的恢复手段是让人重新下达指令。
 >
-> 提升为持久化 supervisor 后，三件事变了：状态落盘为事件账本，重启后重放恢复；「谁该被唤醒继续跑」从隐式的 task 依赖变成显式的续跑队列；长任务的完成不再要求任何进程持续存活。代价是所有状态迁移都要写成事件、都要处理重放幂等，这正是 `supervisor_store.rs` 与 `master_continuation_scheduler.rs` 加起来近五千行的原因。
+> 提升为持久化 supervisor 后，三件事变了：状态落盘为事件账本，重启后重放恢复；「谁该被唤醒继续跑」从隐式的 task 依赖变成显式的续跑队列；长任务的完成不再要求任何进程持续存活。代价是所有状态迁移都要写成事件、都要处理重放幂等，这正是 `crates/octos-cli/src/autonomy/supervisor_store.rs` 与 `crates/octos-cli/src/autonomy/master_continuation_scheduler.rs` 加起来近五千行的原因。
 
 ### 事件账本：SupervisorStore
 
@@ -178,15 +178,15 @@ Tokio task 活在进程里，进程一死全部蒸发。对「跑十分钟的工
 
 ### outbox 唤醒与零 token 监视器
 
-唤醒有两条外部通路。`fleet_wake.rs` 的后台消费者 `spawn_fleet_outbox_consumer`（`crates/octos-cli/src/autonomy/fleet_wake.rs:343`）用 `tokio::spawn` 起一个每 3 秒的 interval 循环（常量 `FLEET_WAKE_INTERVAL_SECS`，`:59`），反复调用 `drain_fleet_outbox_once`（`:235`）把 fleet 内核 outbox 里的唤醒提交转成 keeper 的续跑请求。轮询而非推送，换来的是消费端崩溃后下一 tick 自动恢复，不丢唤醒。
+唤醒有两条外部通路。`crates/octos-cli/src/autonomy/fleet_wake.rs` 的后台消费者 `spawn_fleet_outbox_consumer`（`crates/octos-cli/src/autonomy/fleet_wake.rs:343`）用 `tokio::spawn` 起一个每 3 秒的 interval 循环（常量 `FLEET_WAKE_INTERVAL_SECS`，`:59`），反复调用 `drain_fleet_outbox_once`（`:235`）把 fleet 内核 outbox 里的唤醒提交转成 keeper 的续跑请求。轮询而非推送，换来的是消费端崩溃后下一 tick 自动恢复，不丢唤醒。
 
-`monitor_runtime.rs`（引入于 commit `c4f03647`，#1977/#1988，2026-08-12）提供零 token 的事件监视器：`MonitorMode`（`crates/octos-cli/src/autonomy/monitor_runtime.rs:72`）只有两态，Poll 模式按 `interval_secs` 周期执行探针命令、对 stdout 过滤后以「变化」为事件，Stream 模式跟随进程 stdout 逐行产出。监视器不花模型 token，只有观测变化时才通过 External 续跑唤醒 master，把「等一个外部条件」从对话循环里剥了出去。
+`crates/octos-cli/src/autonomy/monitor_runtime.rs`（引入于 commit `c4f03647`，#1977/#1988，2026-08-12）提供零 token 的事件监视器：`MonitorMode`（`crates/octos-cli/src/autonomy/monitor_runtime.rs:72`）只有两态，Poll 模式按 `interval_secs` 周期执行探针命令、对 stdout 过滤后以「变化」为事件，Stream 模式跟随进程 stdout 逐行产出。监视器不花模型 token，只有观测变化时才通过 External 续跑唤醒 master，把「等一个外部条件」从对话循环里剥了出去。
 
 ### AgentOrchestrator：编排器的 RPC 面
 
 多 agent 操作统一在 `AgentOrchestrator` trait（`crates/octos-cli/src/autonomy/agent_orchestrator.rs:606`）：`list_agents`、`read_agent_status`、`read_agent_output`、`list_agent_artifacts` 是必选方法，`spawn_agent`（`:662`）、`send_input`（`:675`）、`wait_agent`（`:688`）、`resume_agent`（`:699`）四个带默认实现，默认全部返回 `method_not_supported_error`。也就是说 trait 定义了完整的 RPC 面，但并非每个实现都接线了全部操作，读代码时不能假设四个生命周期方法处处可用。
 
-生产实现是 `InProcessAgentOrchestrator`（`:746`，内部 impl 块从 `:1451` 起，trait 实现块在 `:9462`）。它把 `TaskSupervisor` 的后台任务镜像成 agent 状态，核心路径 `run_native_specialist`（`crates/octos-cli/src/autonomy/agent_orchestrator.rs:2471`）串起完整一次受监督专家执行：注册 native agent、运行子 Agent、推送 output 与 artifact、最后回写 supervisor。`goal_loop_runtime.rs`（1562 行）则提供 goal 与 loop 的调度策略原语：`GoalId`（`crates/octos-cli/src/autonomy/goal_loop_runtime.rs:10`）、`GoalRuntimePolicy`（`:239`，含 cadence 与 max_continuations）、`GoalRuntimeState`（`:265`，Active/Paused/Completed/Failed）。
+生产实现是 `InProcessAgentOrchestrator`（`:746`，内部 impl 块从 `:1451` 起，trait 实现块在 `:9462`）。它把 `TaskSupervisor` 的后台任务镜像成 agent 状态，核心路径 `run_native_specialist`（`crates/octos-cli/src/autonomy/agent_orchestrator.rs:2471`）串起完整一次受监督专家执行：注册 native agent、运行子 Agent、推送 output 与 artifact、最后回写 supervisor。`crates/octos-cli/src/autonomy/goal_loop_runtime.rs`（1562 行）则提供 goal 与 loop 的调度策略原语：`GoalId`（`crates/octos-cli/src/autonomy/goal_loop_runtime.rs:10`）、`GoalRuntimePolicy`（`:239`，含 cadence 与 max_continuations）、`GoalRuntimeState`（`:265`，Active/Paused/Completed/Failed）。
 
 诚实边界：当前实现是「一个 master 监督一组受管子 agent、按事件续跑」的编排器，不是任意互联、实时对话的 multi-agent society。RPC 面的存在容易让人高估它，四个默认返回错误的方法就是提醒。
 
@@ -208,7 +208,7 @@ sequenceDiagram
 
 ## 12.7 peer/lease 层：进程隐喻与租约
 
-第三层解决「多个 quasi-agent 并存」的隔离与恢复。`peers/mod.rs` 的首行文档是「Peer-agent staging, addressing, and parked-prompt plumbing.」（`crates/octos-cli/src/peers/mod.rs:1`），第二段注明它是从 `api` 门控的 `ui_protocol` 树里逐字提升出来的（Phase 3 peer-goal 提取，只改模块位置与可见性，逻辑未动）。peer 的并发原语角色体现在 `PeerTaskBinding`（`:166`）：把一个 peer 绑定到一条 `TaskLivenessLease` 上，绑定与退役走 `bind_peer_supervised_task`（`:241`）等函数，peer 的存活因此与 supervisor 的租约一致。
+第三层解决「多个 quasi-agent 并存」的隔离与恢复。`crates/octos-cli/src/peers/mod.rs` 的首行文档是「Peer-agent staging, addressing, and parked-prompt plumbing.」（`crates/octos-cli/src/peers/mod.rs:1`），第二段注明它是从 `api` 门控的 `ui_protocol` 树里逐字提升出来的（Phase 3 peer-goal 提取，只改模块位置与可见性，逻辑未动）。peer 的并发原语角色体现在 `PeerTaskBinding`（`:166`）：把一个 peer 绑定到一条 `TaskLivenessLease` 上，绑定与退役走 `bind_peer_supervised_task`（`:241`）等函数，peer 的存活因此与 supervisor 的租约一致。
 
 fleet 侧的并发原语是两个小结构体。`Lease`（`crates/octos-fleet/src/records.rs:250`）只有 `owner_epoch` 与 `expires_at_ms` 两个字段：daemon 每次启动拿到新 epoch，外来 epoch 或已过期的租约会由 recovery reconciliation 回收。一句话，重启后的旧主人自动失权。`Attempt`（`:256`）给一次执行尝试建档案，fleet id 冗余存储，使 `(child_id, attempt_id)` 就能定位 child 行。
 
@@ -232,7 +232,7 @@ flowchart TB
 
 subagent 像线程：共享进程命运，轻量，随父进程蒸发。peer 像进程：有自己的地址（slug）、自己的工作目录，靠租约声明存活，进程重启后工作成果仍在磁盘上等待收养。
 
-fleet 侧的租约语义值得在本章展开，因为它是「并发所有权如何跨进程传递」的最小完整样本。`Lease` 结构体本身只有两个字段（`crates/octos-fleet/src/records.rs:250`）：`owner_epoch` 是本次 daemon 启动的身份，`expires_at_ms` 是绝对过期时刻。获取发生在派发时：`store.rs` 构造 `Attempt` 时把 `status` 置为 `Leased`、写入 `lease { owner_epoch, expires_at_ms: now_ms + lease_ttl_ms }`（`crates/octos-fleet/src/store.rs:990-1001`，TTL 加法用 `checked_add` 防溢出）。续期不是显式 API：worker 转入执行态走 `mark_running`（`crates/octos-fleet/src/store.rs:1053`），租约字段随 attempt 行持久存在，真正检查它的是所有写路径上的谓词。
+fleet 侧的租约语义值得在本章展开，因为它是「并发所有权如何跨进程传递」的最小完整样本。`Lease` 结构体本身只有两个字段（`crates/octos-fleet/src/records.rs:250`）：`owner_epoch` 是本次 daemon 启动的身份，`expires_at_ms` 是绝对过期时刻。获取发生在派发时：`crates/octos-fleet/src/store.rs` 构造 `Attempt` 时把 `status` 置为 `Leased`、写入 `lease { owner_epoch, expires_at_ms: now_ms + lease_ttl_ms }`（`crates/octos-fleet/src/store.rs:990-1001`，TTL 加法用 `checked_add` 防溢出）。续期不是显式 API：worker 转入执行态走 `mark_running`（`crates/octos-fleet/src/store.rs:1053`），租约字段随 attempt 行持久存在，真正检查它的是所有写路径上的谓词。
 
 让渡与回收靠同一个四部谓词。`complete_child`（`crates/octos-fleet/src/store.rs:1158`）提交结果前要求四个条件同时成立：child 的 `current_attempt_id` 指向本 attempt（attempt-id 栅栏，挡住同代重试）、attempt 状态为 `Running`、`generation` 等于 fleet 当前代（代栅栏，挡住重规划后的旧尝试）、`lease.owner_epoch` 等于调用者 epoch（租约栅栏，挡住重启后的旧主人），谓词本体在 `:1230-1237`。任一不满足就返回 `Superseded`，结果整个丢弃、账面零变动。回收则发生在 boot reconciliation：非终态 attempt 若租约的外来 epoch 不匹配或 `expires_at_ms` 已过（`crates/octos-fleet/src/store.rs:2276-2277` 的 stale 判定），被无条件置为 `Interrupted` 并释放预算预留；注释里记录了 #1973 修复：此前 `Cancelled` 的 fleet 被整体跳过，attempt 与预留被永久钉死。
 
@@ -275,5 +275,5 @@ fleet 侧的租约语义值得在本章展开，因为它是「并发所有权�
 ## 版本演化说明
 
 - 本章分析基线：octos main @ `9c157101`（2026-09-02 检出），行号与数字均为该 commit 实测；事实表见 `assets/ch12-facts.md`（2026-09-03）。
-- 相对 v1 旧稿（原第 11 章）的变化：叙事从「per-session Mutex 序列化」纠正为 session actor 状态所有权模型；新增 supervisor 层（`autonomy/` 十文件）与 peer/lease 层两章内容；`monitor_runtime.rs` 引入于 `c4f03647`（2026-08-12），当前行号含后续 `e2f999a0`（clippy 格式化）与 `0c44b26f`（OLP control channel）两次提交的偏移。
-- 事实表四条「待 writer 核」已在本会话亲测：`default_max_concurrent_sessions()` 返回字面量 `10`；`task_supervisor.rs` 与 `config.rs` 首行均有 `//!` 文档（事实表原记「无/未采集」有误）；`agent_orchestrator.rs` 骨架行号 606/746/1451/2471/9462 全部确认；`execution.rs` 对外入口为 `pub(super) fn execute_tools`（`:2483`），本章按此口径引用。
+- 相对 v1 旧稿（原第 11 章）的变化：叙事从「per-session Mutex 序列化」纠正为 session actor 状态所有权模型；新增 supervisor 层（`autonomy/` 十文件）与 peer/lease 层两章内容；`crates/octos-cli/src/autonomy/monitor_runtime.rs` 引入于 `c4f03647`（2026-08-12），当前行号含后续 `e2f999a0`（clippy 格式化）与 `0c44b26f`（OLP control channel）两次提交的偏移。
+- 事实表四条「待 writer 核」已在本会话亲测：`default_max_concurrent_sessions()` 返回字面量 `10`；`crates/octos-agent/src/task_supervisor.rs` 与 `crates/octos-cli/src/config.rs` 首行均有 `//!` 文档（事实表原记「无/未采集」有误）；`crates/octos-cli/src/autonomy/agent_orchestrator.rs` 骨架行号 606/746/1451/2471/9462 全部确认；`crates/octos-agent/src/agent/execution.rs` 对外入口为 `pub(super) fn execute_tools`（`:2483`），本章按此口径引用。

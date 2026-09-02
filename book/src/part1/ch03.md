@@ -12,7 +12,7 @@ octos-llm 的解决方案自底向上分三块：底层的 `LlmProvider` trait �
 
 ### 3.1.1 trait 签名
 
-`LlmProvider` 的定义位于 `../octos/crates/octos-llm/src/provider.rs:16-121`：
+`LlmProvider` 的定义位于 `crates/octos-llm/src/provider.rs:16-121`：
 
 ```rust
 #[async_trait]
@@ -60,23 +60,23 @@ pub trait LlmProvider: Send + Sync {
 }
 ```
 
-这个 trait 的设计遵循了"最小必要接口"原则（`provider.rs:13` 的注释明确说明了这一点）：只定义所有 Provider 共同的能力，差异在各实现中处理。
+这个 trait 的设计遵循了"最小必要接口"原则（`crates/octos-llm/src/provider.rs:13` 的注释明确说明了这一点）：只定义所有 Provider 共同的能力，差异在各实现中处理。
 
 几个值得关注的设计选择：
 
 `Send + Sync` 约束。 trait 要求实现者是线程安全的，因为 Provider 实例会被多个异步任务通过 `Arc` 共享。这个约束在编译期保证了不会出现单线程 Provider 实现被意外用在多线程场景的错误。
 
-`chat_stream()` 的默认实现。 不是所有 Provider 都原生支持流式响应。默认实现（`provider.rs:27-56`）调用非流式的 `chat()` 方法，然后将完整响应包装为一个合成流：按内容、工具调用、usage、done 事件依次输出。这让新 Provider 只需实现 `chat()` 就能基本工作，流式支持可以后续优化。
+`chat_stream()` 的默认实现。 不是所有 Provider 都原生支持流式响应。默认实现（`crates/octos-llm/src/provider.rs:27-56`）调用非流式的 `chat()` 方法，然后将完整响应包装为一个合成流：按内容、工具调用、usage、done 事件依次输出。这让新 Provider 只需实现 `chat()` 就能基本工作，流式支持可以后续优化。
 
-Provider metadata。 `provider_metadata()` 与 `provider_metadata_for_index()` 是当前主分支新增的重要接口（`provider.rs:97-109`）。它们把实际命中的 provider slot、模型 ID、provider name 等信息交给上层，用于观测、成本归因和多 provider chain 的精确指标记录。`provider_metadata_for_index()` 解决的是组合 Provider 的问题：当一个 `ProviderChain` 内部选中了第 N 个 slot，上层不能只看到 chain 本身的名字，而必须知道真正被调用的是哪一个后端。签名现在是 `_provider_index: Option<usize>`（103 行）：调用方知道具体 slot 时传 `Some(idx)`，只知道 provider 本体时传 `None`，简单调用方不必伪造下标。
+Provider metadata。 `provider_metadata()` 与 `provider_metadata_for_index()` 是当前主分支新增的重要接口（`crates/octos-llm/src/provider.rs:97-109`）。它们把实际命中的 provider slot、模型 ID、provider name 等信息交给上层，用于观测、成本归因和多 provider chain 的精确指标记录。`provider_metadata_for_index()` 解决的是组合 Provider 的问题：当一个 `ProviderChain` 内部选中了第 N 个 slot，上层不能只看到 chain 本身的名字，而必须知道真正被调用的是哪一个后端。签名现在是 `_provider_index: Option<usize>`（103 行）：调用方知道具体 slot 时传 `Some(idx)`，只知道 provider 本体时传 `None`，简单调用方不必伪造下标。
 
 指标上报方法。 `export_metrics()`、`report_late_failure()`、`report_stream_metrics()` 三个方法都有空的默认实现。它们为 AdaptiveRouter 的 EMA 评分系统提供数据源（见 3.4 节），但不强制所有 Provider 实现。这种"可选钩子"模式避免了 trait 膨胀。
 
-`ensure_ready()` 与 `estimate_request_tokens()`。 这是基线上两个较新的成员。`ensure_ready()`（`provider.rs:65`）是异步初始化钩子：agent loop 与 prompt-context 桥在每 turn 第一次依赖窗口数的决策前 await 它，本地上下文探测（见 3.7 节）借此保证真实窗口在首次 compaction 决策前 resolve，而不是在第一次 chat 之后；包装器逐层委托。`estimate_request_tokens()`（`provider.rs:82-89`，#2143 part 3）估算该 provider 实际构建的请求 token 数，含 provider 特有序列化开销（独立 system 块、逐消息 content-block 框架、cache-control 元数据），路由适配守卫据此不再需要用 12.5% 的安全余量顶替这部分开销；默认是 provider 无关的基线估算，具体 provider 覆写收紧，包装器同样委托内层。
+`ensure_ready()` 与 `estimate_request_tokens()`。 这是基线上两个较新的成员。`ensure_ready()`（`crates/octos-llm/src/provider.rs:65`）是异步初始化钩子：agent loop 与 prompt-context 桥在每 turn 第一次依赖窗口数的决策前 await 它，本地上下文探测（见 3.7 节）借此保证真实窗口在首次 compaction 决策前 resolve，而不是在第一次 chat 之后；包装器逐层委托。`estimate_request_tokens()`（`crates/octos-llm/src/provider.rs:82-89`，#2143 part 3）估算该 provider 实际构建的请求 token 数，含 provider 特有序列化开销（独立 system 块、逐消息 content-block 框架、cache-control 元数据），路由适配守卫据此不再需要用 12.5% 的安全余量顶替这部分开销；默认是 provider 无关的基线估算，具体 provider 覆写收紧，包装器同样委托内层。
 
 ### 3.1.2 核心数据类型
 
-`ChatConfig`（`../octos/crates/octos-llm/src/config.rs:8-70`）封装单次请求的全部可调参数：
+`ChatConfig`（`crates/octos-llm/src/config.rs:8-70`）封装单次请求的全部可调参数：
 
 - `max_tokens`: 最大输出 token 数
 - `temperature`: 采样温度（Anthropic 协议路径上 `Some(0.0)` 视为未设置，不上 wire）
@@ -92,21 +92,21 @@ Provider metadata。 `provider_metadata()` 与 `provider_metadata_for_index()` �
 
 `ChatResponse` 包含 LLM 返回的完整信息：内容、stop reason、工具调用请求、token 使用量。`ChatStream` 是一个异步流（`Pin<Box<dyn Stream<Item = Result<StreamEvent>>>>`），逐事件产出流式响应。
 
-`sampling_params`（`config.rs:44-57`）承载 octos 不建模的采样参数，例如 `{"repeat_penalty": 1.1, "top_p": 0.95}`。OpenAI 兼容层把它们展平注入请求体（`openai.rs:635-640`，字段文档 908-909，测试 1614-1616），并防御性剔除 octos 已有专用字段的同名键（#2172），避免流式与非流式两条序列化路径出现重复或分叉的字段。默认为空，展平后什么都不加，云端请求不变。这套 cloud-safe sampler passthrough 由提交 b0072e70（#2172/#2176）引入，服务 llama.cpp / vLLM / SGLang 这类接受非标采样参数的本地推理服务。
+`sampling_params`（`crates/octos-llm/src/config.rs:44-57`）承载 octos 不建模的采样参数，例如 `{"repeat_penalty": 1.1, "top_p": 0.95}`。OpenAI 兼容层把它们展平注入请求体（`crates/octos-llm/src/openai.rs:635-640`，字段文档 908-909，测试 1614-1616），并防御性剔除 octos 已有专用字段的同名键（#2172），避免流式与非流式两条序列化路径出现重复或分叉的字段。默认为空，展平后什么都不加，云端请求不变。这套 cloud-safe sampler passthrough 由提交 b0072e70（#2172/#2176）引入，服务 llama.cpp / vLLM / SGLang 这类接受非标采样参数的本地推理服务。
 
-上下文窗口也不再只有静态目录一个来源。提交 3e479ce3（#2142）引入 per-profile `context_window` 覆盖，落点跨两个 crate：配置结构 `LlmModelSelectionConfig`（`crates/octos-cli/src/profiles.rs:824-875`，字段 875 行）、`config.llm` 侧字段（`crates/octos-cli/src/config.rs:39-46`、489-492）与装配函数 `apply_context_window_override`（`crates/octos-cli/src/qos_catalog.rs:24-36`）都在 octos-cli；octos-llm 只提供 `context_override.rs`（135 行）的 `ContextWindowOverride` 薄包装。它被套在包装栈最外层，值同时压过静态目录与运行时探测（#2135）。profile 里 `config.llm.primary.context_window` / `fallbacks[i].context_window` 的接线主体在 octos-cli，不是 octos-llm 内部，引用时须如实标注这个跨 crate 落点。
+上下文窗口也不再只有静态目录一个来源。提交 3e479ce3（#2142）引入 per-profile `context_window` 覆盖，落点跨两个 crate：配置结构 `LlmModelSelectionConfig`（`crates/octos-cli/src/profiles.rs:824-875`，字段 875 行）、`config.llm` 侧字段（`crates/octos-cli/src/config.rs:39-46`、489-492）与装配函数 `apply_context_window_override`（`crates/octos-cli/src/qos_catalog.rs:24-36`）都在 octos-cli；octos-llm 只提供 `crates/octos-llm/src/context_override.rs`（135 行）的 `ContextWindowOverride` 薄包装。它被套在包装栈最外层，值同时压过静态目录与运行时探测（#2135）。profile 里 `config.llm.primary.context_window` / `fallbacks[i].context_window` 的接线主体在 octos-cli，不是 octos-llm 内部，引用时须如实标注这个跨 crate 落点。
 
-Provider 工厂还接收 LLM HTTP timeout knobs。`CreateParams::http_timeout()`（`../octos/crates/octos-llm/src/registry/mod.rs:110-118`）把 `llm_timeout_secs`、`llm_connect_timeout_secs` 两个可选字段合成 `Option<(u64, u64)>`：任一字段缺省时用默认常量补齐，两者都缺省时返回 `None`。默认常量在 `provider.rs:158-172` 定义：LLM 总超时 300 秒、连接超时 10 秒（从 30 秒下调，连不上就尽快 failover），流式读空闲超时 300 秒（`DEFAULT_LLM_STREAM_IDLE_TIMEOUT_SECS`，165 行，经 reqwest 的 `.read_timeout()` 生效，每次读到数据即重置，持续产 token 的长流不会被总时长截断），embedding 总超时 60 秒、连接超时 15 秒。这把"模型推理慢"和"网络连接失败"分开处理，避免所有超时都挤在一个不可解释的配置项里。
+Provider 工厂还接收 LLM HTTP timeout knobs。`CreateParams::http_timeout()`（`crates/octos-llm/src/registry/mod.rs:110-118`）把 `llm_timeout_secs`、`llm_connect_timeout_secs` 两个可选字段合成 `Option<(u64, u64)>`：任一字段缺省时用默认常量补齐，两者都缺省时返回 `None`。默认常量在 `crates/octos-llm/src/provider.rs:158-172` 定义：LLM 总超时 300 秒、连接超时 10 秒（从 30 秒下调，连不上就尽快 failover），流式读空闲超时 300 秒（`DEFAULT_LLM_STREAM_IDLE_TIMEOUT_SECS`，165 行，经 reqwest 的 `.read_timeout()` 生效，每次读到数据即重置，持续产 token 的长流不会被总时长截断），embedding 总超时 60 秒、连接超时 15 秒。这把"模型推理慢"和"网络连接失败"分开处理，避免所有超时都挤在一个不可解释的配置项里。
 
 ---
 
 ## 3.2 Provider 注册表：模型名自动检测
 
-当用户配置 `model: "claude-sonnet-4"` 时，octos 需要自动确定使用 Anthropic Provider。这个映射由 Provider 注册表实现（`../octos/crates/octos-llm/src/registry/mod.rs`）。
+当用户配置 `model: "claude-sonnet-4"` 时，octos 需要自动确定使用 Anthropic Provider。这个映射由 Provider 注册表实现（`crates/octos-llm/src/registry/mod.rs`）。
 
 ### 3.2.1 检测机制
 
-每个 Provider 注册时声明自己的名称、别名、API key 环境变量（含别名）、默认 base URL、各项要求、检测模式、模型发现能力和工厂函数（`registry/mod.rs:121-167`，`ProviderEntry` 结构体）：
+每个 Provider 注册时声明自己的名称、别名、API key 环境变量（含别名）、默认 base URL、各项要求、检测模式、模型发现能力和工厂函数（`crates/octos-llm/src/registry/mod.rs:121-167`，`ProviderEntry` 结构体）：
 
 ```rust
 struct ProviderEntry {
@@ -124,7 +124,7 @@ struct ProviderEntry {
 }
 ```
 
-`detect_provider()` 方法（`registry/mod.rs:244-260`）按优先级顺序遍历所有 Provider，检查模型名是否包含检测模式。两处结构值得注意：`default_model` 不再是每个条目上的静态字符串，而是从 `model_catalog.json` 中标 `"default": true` 的行构建 `family -> default model` 映射（`registry/mod.rs:24-65`）；`model_discovery` 字段声明该 family 的模型列举能力（协议或"手动输入"），由 `discovery.rs:134` 的 `resolve_model_discovery(family, api_type)` 在运行时解析：`api_type: "anthropic"` 直接命中 Anthropic Messages 策略，已知 family 查注册表声明，未知或 custom family 回落 OpenAI 兼容策略，协议从不由单个 family 字面量推断。
+`detect_provider()` 方法（`crates/octos-llm/src/registry/mod.rs:244-260`）按优先级顺序遍历所有 Provider，检查模型名是否包含检测模式。两处结构值得注意：`default_model` 不再是每个条目上的静态字符串，而是从 `model_catalog.json` 中标 `"default": true` 的行构建 `family -> default model` 映射（`crates/octos-llm/src/registry/mod.rs:24-65`）；`model_discovery` 字段声明该 family 的模型列举能力（协议或"手动输入"），由 `crates/octos-llm/src/discovery.rs:134` 的 `resolve_model_discovery(family, api_type)` 在运行时解析：`api_type: "anthropic"` 直接命中 Anthropic Messages 策略，已知 family 查注册表声明，未知或 custom family 回落 OpenAI 兼容策略，协议从不由单个 family 字面量推断。
 
 | Provider | 检测模式 | 匹配示例 |
 |----------|---------|---------|
@@ -138,13 +138,13 @@ struct ProviderEntry {
 | Minimax | `"minimax"` | MiniMax-Text-01 |
 | Zhipu | `"glm"` | glm-4-plus |
 
-特殊处理：O 系列模型。 OpenAI 的 o1、o3、o4 系列需要前缀匹配而非子串匹配（`registry/mod.rs:248-250`），因为 "o1" 作为子串可能匹配到其他 Provider 的模型名中（如 `ro1and` 假设模型名）。
+特殊处理：O 系列模型。 OpenAI 的 o1、o3、o4 系列需要前缀匹配而非子串匹配（`crates/octos-llm/src/registry/mod.rs:248-250`），因为 "o1" 作为子串可能匹配到其他 Provider 的模型名中（如 `ro1and` 假设模型名）。
 
 另一个容易误读的点是：有些 Provider 的 `detect_patterns` 为空，这不是遗漏，而是明确要求用户通过显式 provider 名或 alias 命中。典型例子包括 Vertex、R9s、OpenRouter、Z.AI、两个 coding-plan family、NVIDIA、Ollama、vLLM 和 local。它们的模型名往往是跨平台转发名、OpenAI 兼容名或用户本地自定义名，盲目做子串检测会产生错误路由。coding-plan family（moonshot-coding、zai-coding）注册在基础 family 之前，显式点名时 coding 端点先于普通端点解析，避免 coding-plan 密钥被静默送到会拒绝它的普通端点。
 
 ### 3.2.2 完整 Provider 注册表
 
-octos 当前注册 19 个 provider family（口径：`registry/mod.rs` 中 `static ALL` 的条目数，186-210 行；registry/ 目录 20 个文件 = 19 个 family 模块 + mod.rs 本身），按数组顺序即检测优先级：
+octos 当前注册 19 个 provider family（口径：`crates/octos-llm/src/registry/mod.rs` 中 `static ALL` 的条目数，186-210 行；registry/ 目录 20 个文件 = 19 个 family 模块 + crates/octos-llm/src/registry/mod.rs 本身），按数组顺序即检测优先级：
 
 | 序 | family | 协议 | 别名（示例） | 检测模式 | 默认模型（取自目录） |
 |---|---------|------|------|---------|---------|
@@ -170,7 +170,7 @@ octos 当前注册 19 个 provider family（口径：`registry/mod.rs` 中 `stat
 
 相比旧稿的 15 个，新增 4 个 family：vertex（Vertex AI 上的 Gemini，凭据走 service-account JSON 环境变量 `VERTEX_SA_JSON`，无 base URL 默认值，模型列举标记 Unsupported）、moonshot-coding / zai-coding（两个 coding-plan 端点，显式点名命中，见上文）、local（llama.cpp / LM Studio 等本地服务器，别名最多，keyless 默认，缺模型时用占位符 `local-default` 而不是报错，真实窗口靠运行时探测，见 3.7 节）。
 
-Anthropic、OpenAI、Gemini 使用专用实现；其余多数条目通过兼容层接入，其中 Ollama、vLLM、OpenRouter、DeepSeek、local 等复用 `OpenAIProvider`，Z.AI 复用 Anthropic Messages API，R9s 则按模型族在两种协议间自动切换。旧稿历史版本曾有 `enum Provider` 枚举，现已不存在。注册方式是"加一个文件 + 在 `ALL` 里加一行"（`registry/mod.rs:2-4` 的模块注释），每个子模块导出 `pub const ENTRY: ProviderEntry` 和 `create()` 工厂。这种"少数专用实现 + 多数兼容适配"架构让新 Provider 的接入成本极低。
+Anthropic、OpenAI、Gemini 使用专用实现；其余多数条目通过兼容层接入，其中 Ollama、vLLM、OpenRouter、DeepSeek、local 等复用 `OpenAIProvider`，Z.AI 复用 Anthropic Messages API，R9s 则按模型族在两种协议间自动切换。旧稿历史版本曾有 `enum Provider` 枚举，现已不存在。注册方式是"加一个文件 + 在 `ALL` 里加一行"（`crates/octos-llm/src/registry/mod.rs:2-4` 的模块注释），每个子模块导出 `pub const ENTRY: ProviderEntry` 和 `create()` 工厂。这种"少数专用实现 + 多数兼容适配"架构让新 Provider 的接入成本极低。
 
 ### 3.2.3 Provider 工厂
 
@@ -182,7 +182,7 @@ Anthropic、OpenAI、Gemini 使用专用实现；其余多数条目通过兼容�
 
 ## 3.3 容错链：三级能力与两级装配
 
-生产环境中，LLM API 调用可能因为多种原因失败：速率限制（429）、服务器过载（503/529）、认证失效（401）、网络超时。octos-llm 把容错拆成三级能力、两级装配：RetryProvider 处理单个 Provider 的瞬时故障，是每个 slot 恒备的基座；其外的装配层二选一：ProviderChain 做静态有序故障转移（缺省装配），或 AdaptiveRouter 做评分路由（`adaptive_routing.enabled` 显式 opt-in，替换而非叠加 chain）。生产装配点在 `../octos/crates/octos-cli/src/qos_catalog.rs:305-352`。
+生产环境中，LLM API 调用可能因为多种原因失败：速率限制（429）、服务器过载（503/529）、认证失效（401）、网络超时。octos-llm 把容错拆成三级能力、两级装配：RetryProvider 处理单个 Provider 的瞬时故障，是每个 slot 恒备的基座；其外的装配层二选一：ProviderChain 做静态有序故障转移（缺省装配），或 AdaptiveRouter 做评分路由（`adaptive_routing.enabled` 显式 opt-in，替换而非叠加 chain）。生产装配点在 `crates/octos-cli/src/qos_catalog.rs:305-352`。
 
 ```mermaid
 flowchart TD
@@ -203,15 +203,15 @@ flowchart TD
     style RP2 fill:#bfb,stroke:#333
 ```
 
-图 3-1：容错链的装配结构。 providers 向量的每个元素已是 RetryProvider 包装的 slot；外层按 `adaptive_routing.enabled` 二选一：缺省回退到静态 ProviderChain，显式 opt-in 才换成 AdaptiveRouter（替换而非叠加）。断路器也是两套独立的：ProviderChain 用 `ProviderSlot.failures`（failover.rs），AdaptiveRouter 用自己的 per-slot circuit breaker（adaptive.rs:1036 一带）。
+图 3-1：容错链的装配结构。 providers 向量的每个元素已是 RetryProvider 包装的 slot；外层按 `adaptive_routing.enabled` 二选一：缺省回退到静态 ProviderChain，显式 opt-in 才换成 AdaptiveRouter（替换而非叠加）。断路器也是两套独立的：ProviderChain 用 `ProviderSlot.failures`（crates/octos-llm/src/failover.rs），AdaptiveRouter 用自己的 per-slot circuit breaker（crates/octos-llm/src/adaptive.rs:1036 一带）。
 
-装配点的源码事实：`qos_catalog.rs:305-352` 是唯一的分叉处，`gateway/profile_factory.rs:363,413`、`commands/chat.rs:1210`、`tools/switch_model.rs:289` 全部是 `ProviderChain::new(vec![RetryProvider...])`，不存在 AdaptiveRouter 内嵌多个 ProviderChain 的路径。
+装配点的源码事实：`crates/octos-cli/src/qos_catalog.rs:305-352` 是唯一的分叉处，`crates/octos-cli/src/commands/gateway/profile_factory.rs:363,413`、`crates/octos-cli/src/commands/chat.rs:1210`、`crates/octos-cli/src/tools/switch_model.rs:289` 全部是 `ProviderChain::new(vec![RetryProvider...])`，不存在 AdaptiveRouter 内嵌多个 ProviderChain 的路径。
 
 ### 3.3.1 基座：RetryProvider — 每个 Provider 恒包的指数退避
 
-RetryProvider（`../octos/crates/octos-llm/src/retry.rs:41-312`）处理单个 Provider 的瞬时故障。
+RetryProvider（`crates/octos-llm/src/retry.rs:41-312`）处理单个 Provider 的瞬时故障。
 
-退避算法（`retry.rs:259-265`）：
+退避算法（`crates/octos-llm/src/retry.rs:259-265`）：
 
 ```rust
 fn calculate_delay(&self, attempt: u32) -> Duration {
@@ -222,9 +222,9 @@ fn calculate_delay(&self, attempt: u32) -> Duration {
 }
 ```
 
-默认配置（`retry.rs:28-37`）：最多重试 3 次，初始延迟 1 秒，退避乘数 2.0，最大延迟 60 秒。重试循环是 `for attempt in 0..=max_retries`（`retry.rs:322`，流式版同构），且仅当还有重试额度（`attempt < max_retries`）且错误可重试时才计算延迟并 sleep。因此默认退避序列实际是 1s → 2s → 4s，共三次等待，第 4 次调用失败后直接向上抛错；`2^3 = 8s` 那一档在循环里走不到，60 秒钳位对默认指数序列同样永不触达，它只在运营者调大退避参数、或 429 解析出超过 60 秒的 retry-after 时才生效。
+默认配置（`crates/octos-llm/src/retry.rs:28-37`）：最多重试 3 次，初始延迟 1 秒，退避乘数 2.0，最大延迟 60 秒。重试循环是 `for attempt in 0..=max_retries`（`crates/octos-llm/src/retry.rs:322`，流式版同构），且仅当还有重试额度（`attempt < max_retries`）且错误可重试时才计算延迟并 sleep。因此默认退避序列实际是 1s → 2s → 4s，共三次等待，第 4 次调用失败后直接向上抛错；`2^3 = 8s` 那一档在循环里走不到，60 秒钳位对默认指数序列同样永不触达，它只在运营者调大退避参数、或 429 解析出超过 60 秒的 retry-after 时才生效。
 
-哪些错误可重试？（`retry.rs:107-147`）
+哪些错误可重试？（`crates/octos-llm/src/retry.rs:107-147`）
 
 | HTTP 状态码 | 含义 | 是否重试 | 是否触发 failover |
 |------------|------|---------|-----------------|
@@ -239,13 +239,13 @@ fn calculate_delay(&self, attempt: u32) -> Duration {
 
 注意 reqwest 级别的网络超时（连接超时、读超时）的特殊处理：不在本地重试（因为同一个 Provider 大概率还是超时），而是立即向上层触发 failover，让 ProviderChain 切换到另一个 Provider。HTTP 504（Gateway Timeout）则被视为可重试，因为服务器可能在短暂过载后恢复。
 
-速率限制解析（`retry.rs:267-311`）：当收到 429 响应时，RetryProvider 会尝试从错误消息中解析推荐的等待时间（如 "Please try again in 29.159s"），加上 1 秒缓冲后等待。如果无法解析，回退到 30 秒固定等待。
+速率限制解析（`crates/octos-llm/src/retry.rs:267-311`）：当收到 429 响应时，RetryProvider 会尝试从错误消息中解析推荐的等待时间（如 "Please try again in 29.159s"），加上 1 秒缓冲后等待。如果无法解析，回退到 30 秒固定等待。
 
 ### 3.3.2 装配选项 A：ProviderChain — 静态有序故障转移（缺省）
 
-ProviderChain（`../octos/crates/octos-llm/src/failover.rs:36-249`）管理一组 Provider 的故障转移顺序。
+ProviderChain（`crates/octos-llm/src/failover.rs:36-249`）管理一组 Provider 的故障转移顺序。
 
-Circuit Breaker 设计（`failover.rs:27-30`）：
+Circuit Breaker 设计（`crates/octos-llm/src/failover.rs:27-30`）：
 
 ```rust
 struct ProviderSlot {
@@ -254,21 +254,21 @@ struct ProviderSlot {
 }
 ```
 
-每个 Provider 维护一个原子计数器记录连续失败次数。当失败次数达到阈值（默认 3），该 Provider 被标记为"降级"（degraded）。成功调用后计数器重置为 0（`record_success` @ `failover.rs:111-114`，`swap(0)` 在 114 行）。
+每个 Provider 维护一个原子计数器记录连续失败次数。当失败次数达到阈值（默认 3），该 Provider 被标记为"降级"（degraded）。成功调用后计数器重置为 0（`record_success` @ `crates/octos-llm/src/failover.rs:111-114`，`swap(0)` 在 114 行）。
 
-故障转移逻辑（`failover.rs:85-99`）：
+故障转移逻辑（`crates/octos-llm/src/failover.rs:85-99`）：
 
 1. 首先尝试第一个未降级的 Provider
 2. 如果所有 Provider 都降级了，选择失败次数最少的那个
 3. 跳过已降级的 Provider，除非它是最后的选择
 
-延迟故障上报（`failover.rs:378`）：`report_late_failure()` 处理一种微妙的场景：Provider 返回了 200 响应，但流式解析后发现内容为空或格式错误。这时需要回溯性地惩罚该 Provider，增加其失败计数，让后续请求优先选择其他 Provider。
+延迟故障上报（`crates/octos-llm/src/failover.rs:378`）：`report_late_failure()` 处理一种微妙的场景：Provider 返回了 200 响应，但流式解析后发现内容为空或格式错误。这时需要回溯性地惩罚该 Provider，增加其失败计数，让后续请求优先选择其他 Provider。
 
 ### 3.3.3 装配选项 B：AdaptiveRouter — EMA 评分与对冲竞赛（显式 opt-in）
 
-AdaptiveRouter（`adaptive.rs:803` 起的 struct，inherent impl 延伸至文件尾 2795 行）是与 ProviderChain 同位的另一个装配选项：opt-in 时它接收的 providers 向量与 chain 本会是同一个（每个元素已包 RetryProvider），在其上做评分路由，而不是在 chain 外再叠一层。
+AdaptiveRouter（`crates/octos-llm/src/adaptive.rs:803` 起的 struct，inherent impl 延伸至文件尾 2795 行）是与 ProviderChain 同位的另一个装配选项：opt-in 时它接收的 providers 向量与 chain 本会是同一个（每个元素已包 RetryProvider），在其上做评分路由，而不是在 chain 外再叠一层。
 
-三种模式（`adaptive.rs:619-631`）：
+三种模式（`crates/octos-llm/src/adaptive.rs:619-631`）：
 
 - Off (0)：静态优先级排序 + circuit breaker，最简单可靠
 - Hedge (1)：基于评分选择 + 对冲竞赛（hedge racing）
@@ -276,7 +276,7 @@ AdaptiveRouter（`adaptive.rs:803` 起的 struct，inherent impl 延伸至文件
 
 #### EMA 评分系统
 
-AdaptiveRouter 为每个 Provider 维护一个实时评分。默认配置下，评分由四个因子的加权组合决定（`score()` @ `adaptive.rs:1766` 起，权重配置字段 @ 42-64）；其中配置字段仍保留 `weight_latency` 这个名字，但第二项实际是"质量 + 吞吐"的复合因子，源码并不直接使用原始 latency：
+AdaptiveRouter 为每个 Provider 维护一个实时评分。默认配置下，评分由四个因子的加权组合决定（`score()` @ `crates/octos-llm/src/adaptive.rs:1766` 起，权重配置字段 @ 42-64）；其中配置字段仍保留 `weight_latency` 这个名字，但第二项实际是"质量 + 吞吐"的复合因子，源码并不直接使用原始 latency：
 
 | 因子 | 权重 | 含义 | 数据来源 |
 |------|------|------|---------|
@@ -285,13 +285,13 @@ AdaptiveRouter 为每个 Provider 维护一个实时评分。默认配置下，�
 | 优先级 (priority) | 20% | 配置顺序 | 用户配置 |
 | 成本 (cost) | 20% | 价格 | 模型目录 |
 
-混合权重设计（`adaptive.rs:1582` 与 1772，score 内的 EMA 混合）：稳定性因子使用"目录基线 + 实时数据"的混合计算。混合权重按调用次数递增：`min(total_calls / 20.0, 0.5)`，这意味着目录基线始终至少占 50% 的影响力。这个设计防止了"冷启动"问题：新 Provider 只有少量调用时，不会因为一两次偶然失败就被判为不可靠。
+混合权重设计（`crates/octos-llm/src/adaptive.rs:1582` 与 1772，score 内的 EMA 混合）：稳定性因子使用"目录基线 + 实时数据"的混合计算。混合权重按调用次数递增：`min(total_calls / 20.0, 0.5)`，这意味着目录基线始终至少占 50% 的影响力。这个设计防止了"冷启动"问题：新 Provider 只有少量调用时，不会因为一两次偶然失败就被判为不可靠。
 
 这里要特别注意：`score()` 明确用 `throughput` 而不是原始 latency 做运行时速度信号，因为单次请求延迟更容易受任务复杂度影响，不适合作为跨 Provider 的直接质量指标。
 
 #### 对冲竞赛（Hedge Racing）
 
-在 Hedge 模式下，AdaptiveRouter 会同时向两个 Provider 发起请求，取先返回的结果（`hedged_chat()` @ `adaptive.rs:2150` 起，`tokio::select!` 竞赛在 ~2220）：
+在 Hedge 模式下，AdaptiveRouter 会同时向两个 Provider 发起请求，取先返回的结果（`hedged_chat()` @ `crates/octos-llm/src/adaptive.rs:2150` 起，`tokio::select!` 竞赛在 ~2220）：
 
 ```rust
 // 简化后的逻辑
@@ -315,15 +315,15 @@ tokio::select! {
 
 #### 探针策略（Probe）
 
-为了保持备用 Provider 的评分数据新鲜，AdaptiveRouter 以一定概率（默认 10%）向非最优 Provider 发送"探针"请求（`should_probe()` @ `adaptive.rs:2097`，陈旧判定 `is_stale` @ 337，默认值 0.1/60s 在配置结构 42-44 与 62-63 行），刷新其性能指标。探针间隔默认 60 秒，避免频繁探测带来的成本。
+为了保持备用 Provider 的评分数据新鲜，AdaptiveRouter 以一定概率（默认 10%）向非最优 Provider 发送"探针"请求（`should_probe()` @ `crates/octos-llm/src/adaptive.rs:2097`，陈旧判定 `is_stale` @ 337，默认值 0.1/60s 在配置结构 42-44 与 62-63 行），刷新其性能指标。探针间隔默认 60 秒，避免频繁探测带来的成本。
 
 ### 3.3.4 Credential Pool 与 Content Classifier：从 Provider failover 到 key / tier 路由
 
 当前主分支的容错链不只是在 Provider 之间切换，还会在同一 Provider 的多组凭据之间轮换，并根据内容复杂度选择模型 tier。
 
-Credential pool。 `credential_pool.rs` 的模块注释明确把目标定义为"持久化 cooldown / rotation state"（`../octos/crates/octos-llm/src/credential_pool.rs:1-29`）。每个凭据都有 cooldown、rate-limit 计数、reset 时间、last used、usage count、reservation 等状态；轮换策略包括 `FillFirst`、`RoundRobin`、`Random`、`LeastUsed`（`credential_pool.rs:166-189`）。当 AdaptiveRouter 发现 401/403 或认证文本时，会把失败分类为 auth failure；发现 429 或 rate limit 文本时，会分类为 rate-limit failure，并通知 credential pool 进入 cooldown 或刷新流程（`notify_credential_failure()` @ `adaptive.rs:1081` 起，错误侧入口 `notify_credential_failure_from_error` @ 2352）。轮换结果还会发出稳定的 harness event，schema 为 `octos.harness.event.v1`，kind 为 `credential_rotation`（`credential_pool.rs:213-245`）。
+Credential pool。 `crates/octos-llm/src/credential_pool.rs` 的模块注释明确把目标定义为"持久化 cooldown / rotation state"（`crates/octos-llm/src/credential_pool.rs:1-29`）。每个凭据都有 cooldown、rate-limit 计数、reset 时间、last used、usage count、reservation 等状态；轮换策略包括 `FillFirst`、`RoundRobin`、`Random`、`LeastUsed`（`crates/octos-llm/src/credential_pool.rs:166-189`）。当 AdaptiveRouter 发现 401/403 或认证文本时，会把失败分类为 auth failure；发现 429 或 rate limit 文本时，会分类为 rate-limit failure，并通知 credential pool 进入 cooldown 或刷新流程（`notify_credential_failure()` @ `crates/octos-llm/src/adaptive.rs:1081` 起，错误侧入口 `notify_credential_failure_from_error` @ 2352）。轮换结果还会发出稳定的 harness event，schema 为 `octos.harness.event.v1`，kind 为 `credential_rotation`（`crates/octos-llm/src/credential_pool.rs:213-245`）。
 
-Content classifier。 `content_classifier.rs` 是一个无 I/O 的启发式分类器，默认关闭；关闭时返回 `Strong`，避免因为未启用策略而误把复杂任务路由到便宜模型（`../octos/crates/octos-llm/src/content_classifier.rs:1-18`, `content_classifier.rs:61-80`）。启用后，它根据代码块、消息长度、强模型关键词和 URL 信号产生 `Cheap` 或 `Strong` tier：代码块、长度超过阈值、命中 debug/refactor/architecture/prove/proof/analyze/design 等关键词会升到 Strong；URL 只作为 reason 记录，不单独触发 Strong（`content_classifier.rs:158-209`）。AdaptiveRouter 可挂载 classifier，并在选择 lane 之前通过 callback 发出 `routing.decision` harness event（`RoutingDecisionCallback` 类型 @ `adaptive.rs:801`，安装入口 `set_routing_decision_callback` @ 1414）。这让上层 harness 可以解释"为什么这个 turn 走强模型"，而不是只能看到最终 provider。
+Content classifier。 `crates/octos-llm/src/content_classifier.rs` 是一个无 I/O 的启发式分类器，默认关闭；关闭时返回 `Strong`，避免因为未启用策略而误把复杂任务路由到便宜模型（`crates/octos-llm/src/content_classifier.rs:1-18`, `crates/octos-llm/src/content_classifier.rs:61-80`）。启用后，它根据代码块、消息长度、强模型关键词和 URL 信号产生 `Cheap` 或 `Strong` tier：代码块、长度超过阈值、命中 debug/refactor/architecture/prove/proof/analyze/design 等关键词会升到 Strong；URL 只作为 reason 记录，不单独触发 Strong（`crates/octos-llm/src/content_classifier.rs:158-209`）。AdaptiveRouter 可挂载 classifier，并在选择 lane 之前通过 callback 发出 `routing.decision` harness event（`RoutingDecisionCallback` 类型 @ `crates/octos-llm/src/adaptive.rs:801`，安装入口 `set_routing_decision_callback` @ 1414）。这让上层 harness 可以解释"为什么这个 turn 走强模型"，而不是只能看到最终 provider。
 
 ---
 
@@ -353,7 +353,7 @@ Chunk 2: \x8c成后请检查结果"}\n\n
 
 ### 3.4.2 octos 的字节安全解析器
 
-octos-llm 的 SSE 解析器（`../octos/crates/octos-llm/src/sse.rs:16-72`）采用字节级缓冲策略：
+octos-llm 的 SSE 解析器（`crates/octos-llm/src/sse.rs:16-72`）采用字节级缓冲策略：
 
 1. 原始字节累积：将每个 chunk 的原始字节追加到 `Vec<u8>` 缓冲区，不做 UTF-8 转换
 2. 事件边界检测：在原始字节中搜索 `\n\n` 或 `\r\n\r\n` 分隔符
@@ -366,7 +366,7 @@ octos-llm 的 SSE 解析器（`../octos/crates/octos-llm/src/sse.rs:16-72`）采
 
 ### 3.4.3 1MB 缓冲上限
 
-安全考量：如果恶意或异常的 LLM Provider 发送一个永远不包含 `\n\n` 的超长响应，缓冲区会无限增长。`MAX_BUFFER_SIZE`（`sse.rs:6-7`）设为 1MB，超过后解析器发出错误事件并清空缓冲区。
+安全考量：如果恶意或异常的 LLM Provider 发送一个永远不包含 `\n\n` 的超长响应，缓冲区会无限增长。`MAX_BUFFER_SIZE`（`crates/octos-llm/src/sse.rs:6-7`）设为 1MB，超过后解析器发出错误事件并清空缓冲区。
 
 ```rust
 const MAX_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
@@ -376,7 +376,7 @@ const MAX_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
 
 ### 3.4.4 UTF-8 分割测试：为什么字节级缓冲不可省略
 
-`sse.rs` 的测试（`sse.rs:261-281`）构造了一个精确的多字节分割场景：
+`crates/octos-llm/src/sse.rs` 的测试（`crates/octos-llm/src/sse.rs:261-281`）构造了一个精确的多字节分割场景：
 
 ```
 "完成后" 的 UTF-8 编码：
@@ -399,7 +399,7 @@ Chunk 2: 90]后"}\n\n                       ← "成"的第 3 字节 + "后"
 
 ## 3.5 模型目录与成本追踪
 
-ModelCatalog（`../octos/crates/octos-llm/src/catalog.rs:48-274`）为每个已知模型维护元数据：
+ModelCatalog（`crates/octos-llm/src/catalog.rs:48-274`）为每个已知模型维护元数据：
 
 ```rust
 pub struct ModelInfo {
@@ -413,7 +413,7 @@ pub struct ModelInfo {
 }
 ```
 
-别名系统：除了完整的模型 ID（如 `claude-sonnet-4-20250514`），目录还支持别名查找（如 `sonnet` → `claude-sonnet-4-20250514`）。查找顺序（`catalog.rs:72-74`）：精确 ID 匹配 → 别名匹配 → None。
+别名系统：除了完整的模型 ID（如 `claude-sonnet-4-20250514`），目录还支持别名查找（如 `sonnet` → `claude-sonnet-4-20250514`）。查找顺序（`crates/octos-llm/src/catalog.rs:72-74`）：精确 ID 匹配 → 别名匹配 → None。
 
 成本追踪：`ModelCost` 记录输入、输出、缓存读取三种 token 类型的百万 token 价格。AdaptiveRouter 的评分系统使用这些数据计算成本因子（见 3.3.3 节），在延迟和成本之间做权衡。
 
@@ -423,16 +423,16 @@ pub struct ModelInfo {
 
 容错链解决"能不能调通"，成本层解决"这次调用花多少钱"。提交 f3aa07f0（#2194）把 prompt cache 的写入与计价纳入这条链路，出发点是一个不对称的事实：cache 写按 1.25 倍输入价计费，cache 读有折扣，而一次不再重放前缀的调用（compaction 摘要、子 agent 汇总）写了缓存也不会有人读，写入的溢价是纯损失。
 
-一次性调用的 cache-write 退出。 `ChatConfig::cache_retention`（`config.rs:58-75`，`CacheRetention` 枚举 74-92 行）为单次请求声明缓存保留偏好：`None` 表示这次不写缓存。Anthropic 协议上的具体动作是不发任何 `cache_control` 断点，因为每个断点既读又写，一次没人读的写仍按 1.25 倍计费。`Default` 维持 provider 配置的缓存行为（Anthropic 的三个 ephemeral 断点）。默认值保持 `Default` 且 `skip_serializing_if` 不上 wire，持久化的 `ChatConfig` JSON 形状不变。装配点在 `anthropic.rs` 的 build_request（cache_control 装配 179-207 行；一次性请求不写 cache 的分支见 148 行附近）。
+一次性调用的 cache-write 退出。 `ChatConfig::cache_retention`（`crates/octos-llm/src/config.rs:58-75`，`CacheRetention` 枚举 74-92 行）为单次请求声明缓存保留偏好：`None` 表示这次不写缓存。Anthropic 协议上的具体动作是不发任何 `cache_control` 断点，因为每个断点既读又写，一次没人读的写仍按 1.25 倍计费。`Default` 维持 provider 配置的缓存行为（Anthropic 的三个 ephemeral 断点）。默认值保持 `Default` 且 `skip_serializing_if` 不上 wire，持久化的 `ChatConfig` JSON 形状不变。装配点在 `crates/octos-llm/src/anthropic.rs` 的 build_request（cache_control 装配 179-207 行；一次性请求不写 cache 的分支见 148 行附近）。
 
-cache-write 感知定价。 定价层（`pricing.rs:149-195`）按应答 slot 的协议区别建模：只有 Anthropic Messages 协议上报 `cache_creation_input_tokens`（写，1.25 倍）与 `cache_read_input_tokens`（读，折扣）；其他协议（openai、openrouter、deepseek、local、未知）的缓存读折扣不可知：目录中唯一的 OpenAI 行 `cache_read_per_mtok` 为 None，折扣随模型代次变化，套一个 provider 级折扣等于替部分模型编数。因此读按全输入价（1.0 倍，宁可高估不低估）计，写按 1.25 倍而非 0 计（`cache_write_tokens` 只有 Anthropic 解析器会填）。
+cache-write 感知定价。 定价层（`crates/octos-llm/src/pricing.rs:149-195`）按应答 slot 的协议区别建模：只有 Anthropic Messages 协议上报 `cache_creation_input_tokens`（写，1.25 倍）与 `cache_read_input_tokens`（读，折扣）；其他协议（openai、openrouter、deepseek、local、未知）的缓存读折扣不可知：目录中唯一的 OpenAI 行 `cache_read_per_mtok` 为 None，折扣随模型代次变化，套一个 provider 级折扣等于替部分模型编数。因此读按全输入价（1.0 倍，宁可高估不低估）计，写按 1.25 倍而非 0 计（`cache_write_tokens` 只有 Anthropic 解析器会填）。
 
 ```mermaid
 flowchart TD
     Req["请求到达"] --> CR{"ChatConfig::cache_retention?"}
     CR -->|Default| CC["Anthropic: 装配三个 cache_control 断点<br/>读 + 写"]
     CR -->|"None（一次性调用）"| NC["不发任何断点<br/>跳过 1.25x 写入溢价"]
-    CC --> P["pricing.rs 计价"]
+    CC --> P["crates/octos-llm/src/pricing.rs 计价"]
     NC --> P
     P --> AP{"slot 说 Anthropic Messages?"}
     AP -->|是| W["写 1.25x / 读折扣价"]
@@ -447,17 +447,17 @@ flowchart TD
 
 容错链之外，基线上还有一组围绕"谁来接这次调用"的模块。它们不是同一条链的层，而是按场景挂在 provider 之上的调度件。
 
-lane.rs（per-topic 模型车道，RFC-3 / #1292）。 按会话主题（如 `slides:*`、`code:*`、`research:*`）把请求路由到不同模型档位，让"做幻灯片"和"写核心代码"不必共享同一个 primary/fallback 组合。
+crates/octos-llm/src/lane.rs（per-topic 模型车道，RFC-3 / #1292）。 按会话主题（如 `slides:*`、`code:*`、`research:*`）把请求路由到不同模型档位，让"做幻灯片"和"写核心代码"不必共享同一个 primary/fallback 组合。
 
-router.rs（多模型子 agent 的 provider 路由）。 按前缀方案把 LLM 调用分派给不同子 provider：子 agent 用不同前缀声明自己的模型需求，路由器据此选中对应后端，母 agent 与子 agent 可以在同一会话内并行使用不同模型。
+crates/octos-cli/src/api/router.rs（多模型子 agent 的 provider 路由）。 按前缀方案把 LLM 调用分派给不同子 provider：子 agent 用不同前缀声明自己的模型需求，路由器据此选中对应后端，母 agent 与子 agent 可以在同一会话内并行使用不同模型。
 
-call_policy.rs（每 turn 调用策略）。 语音 turn 把 agent run 包在 `with_llm_call_policy(FailFast, ..)` 里：每个 provider 包装器与叶子 provider 都短路 retry、failover 与 hedge，低延迟优先。策略是 per-turn 的任务级输入，不是全局开关。
+crates/octos-llm/src/call_policy.rs（每 turn 调用策略）。 语音 turn 把 agent run 包在 `with_llm_call_policy(FailFast, ..)` 里：每个 provider 包装器与叶子 provider 都短路 retry、failover 与 hedge，低延迟优先。策略是 per-turn 的任务级输入，不是全局开关。
 
-throttle.rs（信号量节流）。 用信号量限制 provider 的并发调用数，保护有严格并发配额的端点（多凭据时按池分摊）。它管的是"同时几条"，与 registry 管的"用哪个"正交。
+crates/octos-llm/src/throttle.rs（信号量节流）。 用信号量限制 provider 的并发调用数，保护有严格并发配额的端点（多凭据时按池分摊）。它管的是"同时几条"，与 registry 管的"用哪个"正交。
 
-credential_pool.rs（凭据池，M6.5）。 见 3.3.3 节：多凭据轮换 + 持久化 cooldown，429/auth 失败驱动。
+crates/octos-llm/src/credential_pool.rs（凭据池，M6.5）。 见 3.3.3 节：多凭据轮换 + 持久化 cooldown，429/auth 失败驱动。
 
-local_context_probe.rs（本地窗口探测，#2135）。 提交 10022387 引入。目录里 local / ollama / vllm 家族的窗口数是注册时的保守猜测（约 32K），因为注册时没人知道运营者启动了什么引擎。探测器（1300 行模块，`new` @ 201，`new_ollama` @ 226）在后台问服务器拿真实窗口：OpenAI 兼容端点走 props/models 两个 URL，Ollama 原生走 `GET /api/ps`（取运行中模型的分配窗口，无需 key）。探测结果经 trait 的 `ensure_ready()` 钩子（`provider.rs:65`）在首次 compaction 决策前 resolve，`context_window()` 不再是纯静态查表。要压过探测值，用 3.1.2 节的 per-profile `context_window` 覆盖（操作员覆盖 > 探测 > 目录）。
+crates/octos-llm/src/local_context_probe.rs（本地窗口探测，#2135）。 提交 10022387 引入。目录里 local / ollama / vllm 家族的窗口数是注册时的保守猜测（约 32K），因为注册时没人知道运营者启动了什么引擎。探测器（1300 行模块，`new` @ 201，`new_ollama` @ 226）在后台问服务器拿真实窗口：OpenAI 兼容端点走 props/models 两个 URL，Ollama 原生走 `GET /api/ps`（取运行中模型的分配窗口，无需 key）。探测结果经 trait 的 `ensure_ready()` 钩子（`crates/octos-llm/src/provider.rs:65`）在首次 compaction 决策前 resolve，`context_window()` 不再是纯静态查表。要压过探测值，用 3.1.2 节的 per-profile `context_window` 覆盖（操作员覆盖 > 探测 > 目录）。
 
 ---
 
@@ -543,4 +543,4 @@ octos-llm 解决了 LLM Provider 集成的核心挑战：
 ---
 
 > 版本演化说明
-> 本章分析基于 `../octos` main @ 9c157101（2026-09-02）。本次修订要点：① 注册表从 15 个 Provider 重列为 19 个 provider family（新增 vertex、moonshot-coding、zai-coding、local），注册叙事改为 registry/ 目录 + `discovery.rs:134` 的模型发现协议，不再出现 `enum Provider`；② trait 补入 `ensure_ready()` 与 `estimate_request_tokens()`，`provider_metadata_for_index` 签名改为 `Option<usize>`；③ timeout 叙事改讲 `CreateParams::http_timeout()` 与 `DEFAULT_LLM_STREAM_IDLE_TIMEOUT_SECS`；④ 新增 3.6「成本层」（cache 经济学，提交 f3aa07f0）与 3.7「车道与路由」（六个调度件模块与 10022387 本地窗口探测）；⑤ sampler passthrough（b0072e70）与 per-profile context_window 覆盖（3e479ce3，接线主体在 octos-cli）写入 3.1.2；⑥ 全部引用行号按 9c157101 逐条重标（adaptive.rs 已扩至 2795 行，catalog.rs 勘误为 274 行，见 assets/ch03-refcheck.md）。Provider 注册表与评分权重可能继续调整。本轮修复（C2 报告 assets/ch03-techreview.md 裁定项）：⑦ 容错链叙事改为三级能力与两级装配（mermaid 图改为二选一分支，AdaptiveRouter 与 ProviderChain 同位替换而非嵌套）；⑧ ChatConfig 字段清单按 config.rs:8-70 重列（删去不存在的 model/system_prompt，补入 stop_sequences、reasoning_effort、context_management）；⑨ 退避序列更正为 1s → 2s → 4s（8s 档位与 60s 钳位在默认序列下不可达）；⑩ 本章回顾由重号的 3.6 改为 3.8。容错能力的三级递进仍是理解 octos-llm 的主线。
+> 本章分析基于 `../octos` main @ 9c157101（2026-09-02）。本次修订要点：① 注册表从 15 个 Provider 重列为 19 个 provider family（新增 vertex、moonshot-coding、zai-coding、local），注册叙事改为 registry/ 目录 + `crates/octos-llm/src/discovery.rs:134` 的模型发现协议，不再出现 `enum Provider`；② trait 补入 `ensure_ready()` 与 `estimate_request_tokens()`，`provider_metadata_for_index` 签名改为 `Option<usize>`；③ timeout 叙事改讲 `CreateParams::http_timeout()` 与 `DEFAULT_LLM_STREAM_IDLE_TIMEOUT_SECS`；④ 新增 3.6「成本层」（cache 经济学，提交 f3aa07f0）与 3.7「车道与路由」（六个调度件模块与 10022387 本地窗口探测）；⑤ sampler passthrough（b0072e70）与 per-profile context_window 覆盖（3e479ce3，接线主体在 octos-cli）写入 3.1.2；⑥ 全部引用行号按 9c157101 逐条重标（crates/octos-llm/src/adaptive.rs 已扩至 2795 行，crates/octos-llm/src/catalog.rs 勘误为 274 行，见 assets/ch03-refcheck.md）。Provider 注册表与评分权重可能继续调整。本轮修复（C2 报告 assets/ch03-techreview.md 裁定项）：⑦ 容错链叙事改为三级能力与两级装配（mermaid 图改为二选一分支，AdaptiveRouter 与 ProviderChain 同位替换而非嵌套）；⑧ ChatConfig 字段清单按 crates/octos-llm/src/config.rs:8-70 重列（删去不存在的 model/system_prompt，补入 stop_sequences、reasoning_effort、context_management）；⑨ 退避序列更正为 1s → 2s → 4s（8s 档位与 60s 钳位在默认序列下不可达）；⑩ 本章回顾由重号的 3.6 改为 3.8。容错能力的三级递进仍是理解 octos-llm 的主线。

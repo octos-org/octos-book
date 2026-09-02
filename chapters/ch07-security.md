@@ -84,7 +84,7 @@ fail-closed 的执行还有一条更早的短路路径。exec 形态的工具在
 
 ```mermaid
 flowchart TB
-    S["decide_sandbox(config, os, probe)<br/>mod.rs:809"] --> Q1{"enabled = false<br/>或 mode = none?"}
+    S["decide_sandbox(config, os, probe)<br/>crates/octos-agent/src/sandbox/mod.rs:809"] --> Q1{"enabled = false<br/>或 mode = none?"}
     Q1 -->|是| U["Unconfined(Disabled / ExplicitNone)<br/>显式 opt-out，直通"]
     Q1 -->|否| Q2{"mode 是显式后端?"}
     Q2 -->|是| Q3{"OS 匹配且后端可用?"}
@@ -202,15 +202,15 @@ v1 模式语法刻意收窄：workspace 相对路径、`/` 分隔、段内 `*`�
 
 ```mermaid
 flowchart LR
-    subgraph G["WorkerGrant（grant.rs:151）"]
+    subgraph G["WorkerGrant（crates/octos-fleet/src/grant.rs:151）"]
         N["network: NetworkGrant<br/>None / Hosts / Full"]
         T["tools: Vec&lt;String&gt;<br/>默认 BASE_TOOLS 七项"]
         F["fs: FsGrant<br/>Workspace / Host"]
         W["write_paths: Option&lt;Vec&lt;String&gt;&gt;<br/>#1976 写围栏"]
         CO["create_only: bool<br/>仅创建不覆盖"]
     end
-    V["validate()（grant.rs:247）"] --> G
-    G --> SB["沙箱投影（mod.rs:955-1000）<br/>macOS 精确 / 其余降级只读"]
+    V["validate()（crates/octos-fleet/src/grant.rs:247）"] --> G
+    G --> SB["沙箱投影（crates/octos-agent/src/sandbox/mod.rs:955-1000）<br/>macOS 精确 / 其余降级只读"]
     G --> FT["工具层执行<br/>globset 围栏 + O_CREAT|O_EXCL"]
 ```
 
@@ -225,7 +225,7 @@ flowchart LR
 - `EmptyHostAllowlist`：`Hosts(vec![])` 空允许表。注释点名这是 fail-open 陷阱：空表绝不能读作「无限制」，操作者没列主机就是 `None`
 - #1976 四连：`WritePathsWithHostFs`（围栏配 `fs: Host` 不一致，Host 让 shell 够得着围栏禁止的一切，deny-wins 直接拒）、`CreateOnlyWithoutWritePaths`（无表可应用）、`EmptyWritePathsWithCreateOnly`（空表加 create_only 等于授予创建无）、`InvalidWritePath { pattern, reason }`（语法外模式）
 
-validate 在两个时点调用：master 的 `goal_plan` 解析时，以及防御性地在 registry 构建时。与第 6 章 `write_grant.rs` 的关系：第 6 章讲了单工具的参数级写授权，本章的 `WorkerGrant` 是 worker 级的整体授予模型；fleet 如何把这个 grant 装配成封闭工具注册表与沙箱配置，详见第 16 章。
+validate 在两个时点调用：master 的 `goal_plan` 解析时，以及防御性地在 registry 构建时。与第 6 章 `crates/octos-agent/src/tools/write_grant.rs` 的关系：第 6 章讲了单工具的参数级写授权，本章的 `WorkerGrant` 是 worker 级的整体授予模型；fleet 如何把这个 grant 装配成封闭工具注册表与沙箱配置，详见第 16 章。
 
 > **工程决策侧栏：为什么 grant 是类型而不是配置约定**
 >

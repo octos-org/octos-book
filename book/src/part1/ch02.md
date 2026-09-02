@@ -1,6 +1,6 @@
 # 第 2 章：octos-core：用类型系统定义领域语言
 
-> **定位**：本章深入 octos 最底层的 crate octos-core（当前 22,313 行 Rust 源文件，剔除 ui_protocol_tests.rs 测试后约 15,005 行，主要增长来自 UI Protocol wire 类型），展示如何用 Rust 类型系统构建 AI Agent 平台的领域语言。前置依赖：第 1 章。适用场景：想理解 octos 类型基础的所有读者，尤其是希望通过实战项目学习 Rust 枚举和错误处理设计的读者（读者 A），以及想了解"零依赖 core crate"设计哲学的资深开发者（读者 B）。
+> **定位**：本章深入 octos 最底层的 crate octos-core（当前 22,313 行 Rust 源文件，剔除 crates/octos-cli/src/api/ui_protocol_tests.rs 测试后约 15,005 行，主要增长来自 UI Protocol wire 类型），展示如何用 Rust 类型系统构建 AI Agent 平台的领域语言。前置依赖：第 1 章。适用场景：想理解 octos 类型基础的所有读者，尤其是希望通过实战项目学习 Rust 枚举和错误处理设计的读者（读者 A），以及想了解"零依赖 core crate"设计哲学的资深开发者（读者 B）。
 
 如果把 octos 比作一座城市，octos-core 就是它的语言——不是建筑、不是道路，而是居民用来交流的词汇和语法。`Task`、`Message`、`MessageRole`、`Error`、UI Protocol wire 类型，这些类型定义了系统中所有组件如何描述自己的状态和意图。octos 的上层 crate 都依赖这些类型，但 octos-core 本身不依赖 workspace 中的任何其他 crate。
 
@@ -132,9 +132,9 @@ pub struct Message {
 }
 ```
 
-`media` 字段（`types.rs:232-234`）支持多模态：当用户发送图片或语音时，文件路径存储在这里，由 octos-llm 在构建 API 请求时转换为对应 Provider 的格式（base64 编码或 URL 引用）。序列化时，空的 `media` 向量会被跳过。
+`media` 字段（`crates/octos-core/src/types.rs:232-234`）支持多模态：当用户发送图片或语音时，文件路径存储在这里，由 octos-llm 在构建 API 请求时转换为对应 Provider 的格式（base64 编码或 URL 引用）。序列化时，空的 `media` 向量会被跳过。
 
-`reasoning_content`（`types.rs:239-241`）是为推理模型（如 OpenAI o1、Kimi k2.5）设计的：这些模型会先输出一段内部推理过程，然后才给出最终回答。将推理内容与正式回答分离存储，让上层可以选择是否展示思维链。
+`reasoning_content`（`crates/octos-core/src/types.rs:239-241`）是为推理模型（如 OpenAI o1、Kimi k2.5）设计的：这些模型会先输出一段内部推理过程，然后才给出最终回答。将推理内容与正式回答分离存储，让上层可以选择是否展示思维链。
 
 `client_message_id` 和 `thread_id` 是当前主分支里很重要的 UI / 持久化 identity 字段（`crates/octos-core/src/types.rs:229-256`）。它们不是 Provider 消息格式的一部分，而是 AppUI、Gateway、Session 持久化共同依赖的跨 crate 协议字段：前者用于把客户端乐观 UI 气泡和服务端持久化 seq 对齐，后者用于把 user / assistant / tool 消息归入同一个渲染 thread。
 
@@ -144,9 +144,9 @@ pub struct Message {
 
 | 类型 | 定义位置 | 职责 | 典型来源 |
 |------|----------|------|----------|
-| `ClientMessageId` | `types.rs:12-64` | 客户端提交 user message 时生成的乐观 UI / 幂等 token | Web/AppUI client |
-| `ThreadId` | `types.rs:79-177` | 渲染分组 key，让 assistant/tool 回复落回 originating user bubble | 通常 root at `ClientMessageId` |
-| `TurnId` | `ui_protocol.rs:607-623` | UI Protocol 的服务器端 turn identity | backend 创建 |
+| `ClientMessageId` | `crates/octos-core/src/types.rs:12-64` | 客户端提交 user message 时生成的乐观 UI / 幂等 token | Web/AppUI client |
+| `ThreadId` | `crates/octos-core/src/types.rs:79-177` | 渲染分组 key，让 assistant/tool 回复落回 originating user bubble | 通常 root at `ClientMessageId` |
+| `TurnId` | `crates/octos-core/src/ui_protocol.rs:607-623` | UI Protocol 的服务器端 turn identity | backend 创建 |
 
 ```mermaid
 flowchart LR
@@ -184,9 +184,9 @@ pub enum MessageRole {
 }
 ```
 
-关键在于它的两个方法实现。`as_str()`（`types.rs:453-463`）返回 `&'static str`，四个变体分别映射为 `"system"`、`"user"`、`"assistant"`、`"tool"`，一个穷尽的 `match`，没有通配分支，新增变体时编译器会强制补齐这里的映射。
+关键在于它的两个方法实现。`as_str()`（`crates/octos-core/src/types.rs:453-463`）返回 `&'static str`，四个变体分别映射为 `"system"`、`"user"`、`"assistant"`、`"tool"`，一个穷尽的 `match`，没有通配分支，新增变体时编译器会强制补齐这里的映射。
 
-`Display` trait 实现（`types.rs:465-469`）的函数体只有一行 `f.write_str(self.as_str())`。为什么要同时实现这两个？因为它们服务于不同场景：
+`Display` trait 实现（`crates/octos-core/src/types.rs:465-469`）的函数体只有一行 `f.write_str(self.as_str())`。为什么要同时实现这两个？因为它们服务于不同场景：
 
 - `as_str()` 接受 `self`（按值传递），返回 `&'static str`。这是可行的因为 `MessageRole` 实现了 `Copy` trait：枚举只有四个无数据变体，拷贝成本等同于拷贝一个字节。按值传递用于需要零分配的场景，比如构建 API 请求时设置 JSON 字段值。
 - `Display` 用于格式化字符串（`format!()`、`println!()` 等），是 Rust 生态的标准接口。
@@ -206,11 +206,11 @@ pub struct ToolCall {
 }
 ```
 
-`metadata` 字段（`types.rs:476-478`）是为 Provider 特定数据预留的扩展点。例如，Google Gemini 的工具调用会携带 `thought_signature` 字段，用于验证工具调用是否来自模型的推理过程。通过 `Option<Value>` 存储这些异构数据，核心类型无需为每个 Provider 添加特定字段。
+`metadata` 字段（`crates/octos-core/src/types.rs:476-478`）是为 Provider 特定数据预留的扩展点。例如，Google Gemini 的工具调用会携带 `thought_signature` 字段，用于验证工具调用是否来自模型的推理过程。通过 `Option<Value>` 存储这些异构数据，核心类型无需为每个 Provider 添加特定字段。
 
 ### 2.2.5 便捷构造函数
 
-Message 仍保留了三个 legacy 便捷构造函数（`types.rs:355-417`），用于测试、反序列化 round-trip 和旧调用点：`Message::user(content)`、`Message::assistant(content)`、`Message::system(content)`，签名均为 `(content: impl Into<String>) -> Self`。
+Message 仍保留了三个 legacy 便捷构造函数（`crates/octos-core/src/types.rs:355-417`），用于测试、反序列化 round-trip 和旧调用点：`Message::user(content)`、`Message::assistant(content)`、`Message::system(content)`，签名均为 `(content: impl Into<String>) -> Self`。
 
 注意参数类型是 `impl Into<String>` 而非 `String` 或 `&str`。这让调用者可以传入 `String`、`&str`、甚至 `Cow<str>`，编译器会自动选择最高效的转换路径。这是 Rust 中常见的 API 设计模式：通过泛型减少调用者的类型转换负担。三个构造器的函数体都只是把 content 包进对应 role 的 Message，不再赘述。
 
@@ -297,7 +297,7 @@ pub struct Error {
 
 这里的关键设计是三层结构：`kind` 分类错误类型，`context` 添加执行上下文，`suggestion` 提供可操作的修复建议。
 
-ErrorKind 是一个 15 变体的枚举（`error.rs:20-56`），覆盖了系统中所有错误类别：
+ErrorKind 是一个 15 变体的枚举（`crates/octos-core/src/error.rs:20-56`），覆盖了系统中所有错误类别：
 
 ```rust
 pub enum ErrorKind {
@@ -331,7 +331,7 @@ pub enum ErrorKind {
 
 ### 2.4.3 可操作的错误消息
 
-octos 的错误设计最值得学习的不是库的选择，而是"让错误消息可操作"的理念。看几个便捷构造函数的实现（`error.rs:80-173`）：
+octos 的错误设计最值得学习的不是库的选择，而是"让错误消息可操作"的理念。看几个便捷构造函数的实现（`crates/octos-core/src/error.rs:80-173`）：
 
 ```rust
 pub fn api_key_not_set(provider: impl Into<String>, env_var: impl Into<String>) -> Self {
@@ -349,7 +349,7 @@ pub fn api_key_not_set(provider: impl Into<String>, env_var: impl Into<String>) 
 
 当用户忘记设置 API Key 时，错误消息不只告诉你"key 没设"，还告诉你"设置 `ANTHROPIC_API_KEY` 环境变量，或在 config.json 中配置"。同样，`api_error()` 会根据 HTTP 状态码给出不同的建议：401 提示检查 key，429 提示被限流，504 提示超时。
 
-Display 实现（`error.rs:174-224`）将这三层信息格式化为用户友好的输出，并使用 `truncated_utf8()` 安全截断过长的 API 响应体，避免错误日志中出现巨大的 JSON dump。
+Display 实现（`crates/octos-core/src/error.rs:174-224`）将这三层信息格式化为用户友好的输出，并使用 `truncated_utf8()` 安全截断过长的 API 响应体，避免错误日志中出现巨大的 JSON dump。
 
 ---
 
@@ -367,7 +367,7 @@ UTF-8 是一种变长编码：ASCII 字符占 1 字节，中文字符占 3 字�
 
 octos 提供了两个截断函数：
 
-**`truncate_utf8`**（`utils.rs:6-16`）原地截断，修改原字符串：
+**`truncate_utf8`**（`crates/octos-core/src/utils.rs:6-16`）原地截断，修改原字符串：
 
 ```rust
 pub fn truncate_utf8(s: &mut String, max_len: usize, suffix: &str) {
@@ -383,7 +383,7 @@ pub fn truncate_utf8(s: &mut String, max_len: usize, suffix: &str) {
 }
 ```
 
-**`truncated_utf8`**（`utils.rs:21-30`）返回新字符串，不修改原始数据：
+**`truncated_utf8`**（`crates/octos-core/src/utils.rs:21-30`）返回新字符串，不修改原始数据：
 
 ```rust
 pub fn truncated_utf8(s: &str, max_len: usize, suffix: &str) -> String {
@@ -408,7 +408,7 @@ pub fn truncated_utf8(s: &str, max_len: usize, suffix: &str) -> String {
 
 ### 2.5.3 truncate_head_tail 与 TruncationReport：结构化的首尾截断
 
-对于工具输出和错误消息，仅保留开头往往不够：尾部的错误信息或结论同样重要。2026-08-31 的提交 d8125d18 之后，octos 用一对函数解决这个问题：`truncate_head_tail`（`utils.rs:91-96`）与它背后的 `truncate_head_tail_report`（`utils.rs:105`）。
+对于工具输出和错误消息，仅保留开头往往不够：尾部的错误信息或结论同样重要。2026-08-31 的提交 d8125d18 之后，octos 用一对函数解决这个问题：`truncate_head_tail`（`crates/octos-core/src/utils.rs:91-96`）与它背后的 `truncate_head_tail_report`（`crates/octos-core/src/utils.rs:105`）。
 
 `truncate_head_tail_report` 是真正的实现，返回结构化的 `TruncationReport`：
 
@@ -432,12 +432,12 @@ pub fn truncate_head_tail(s: &str, max_len: usize, head_ratio: f32) -> String {
 
 这个函数家族在 octos 的多个场景中使用：
 - 工具输出截断（Shell 命令的 stdout/stderr）
-- 错误消息中的 API 响应体截断（`error.rs`）
+- 错误消息中的 API 响应体截断（`crates/octos-core/src/error.rs`）
 - 上下文压缩时的消息摘要（详见第 8 章）
 
 ### 2.5.4 tool_output_limit：按工具类型定制的截断策略
 
-`tool_output_limit`（`utils.rs:180-199`）为不同工具设置了不同的字节上限：
+`tool_output_limit`（`crates/octos-core/src/utils.rs:180-199`）为不同工具设置了不同的字节上限：
 
 | 工具 | 上限 | 理由 |
 |------|------|------|
@@ -468,11 +468,11 @@ SessionKey 支持四种格式，向后兼容：
 | `channel:chat_id#topic` | `telegram:12345#research` | 同一会话的多主题 |
 | `profile:channel:chat_id#topic` | `work:telegram:12345#research` | 完整形式 |
 
-`base_key()` 方法（`types.rs:525-528`）返回去掉 `#topic` 后缀的部分，用于会话持久化（同一个 base_key 的不同 topic 共享持久化文件）。`topic()` 方法（`types.rs:530-533`）提取主题后缀。
+`base_key()` 方法（`crates/octos-core/src/types.rs:525-528`）返回去掉 `#topic` 后缀的部分，用于会话持久化（同一个 base_key 的不同 topic 共享持久化文件）。`topic()` 方法（`crates/octos-core/src/types.rs:530-533`）提取主题后缀。
 
 ### 2.6.2 Channel 推断，而不是构造期验证
 
-当前源码没有在 `SessionKey::new()` 构造时拒绝未知 channel；构造函数只是格式化字符串。公开的 `is_reserved_channel_name()`（`types.rs:603-630`，内部委托私有 `is_channel_name()`）的职责是帮助 `split_base_key()` 判断三段式 key 里的第一段究竟是 `profile_id` 还是 `channel`。白名单包含 19 个已知 channel：
+当前源码没有在 `SessionKey::new()` 构造时拒绝未知 channel；构造函数只是格式化字符串。公开的 `is_reserved_channel_name()`（`crates/octos-core/src/types.rs:603-630`，内部委托私有 `is_channel_name()`）的职责是帮助 `split_base_key()` 判断三段式 key 里的第一段究竟是 `profile_id` 还是 `channel`。白名单包含 19 个已知 channel：
 
 ```
 api, cli, dingtalk, discord, email, feishu, line, local, matrix, qq-bot,
@@ -499,15 +499,15 @@ pub enum AgentMessage {
 
 五种消息类型涵盖了 Agent 协调的核心场景：分配任务、更新状态、完成通知、请求上下文、返回上下文。注意 `TaskAssign` 中的 `Box<Task>`：Task 结构体较大，使用 `Box` 堆分配避免了枚举变体之间的大小不均导致的内存浪费。
 
-`task_id()` 方法（`message.rs:31-42`）返回 `Option<&TaskId>`，为所有变体提供统一的任务 ID 访问接口。调用者无需对每个变体做模式匹配就能获取关联的任务 ID，只需处理 `Option` 即可。
+`task_id()` 方法（`crates/octos-core/src/message.rs:31-42`）返回 `Option<&TaskId>`，为所有变体提供统一的任务 ID 访问接口。调用者无需对每个变体做模式匹配就能获取关联的任务 ID，只需处理 `Option` 即可。
 
 ---
 
 ## 2.8 abort：多语言中断检测
 
-一个有趣的小模块：`abort.rs` 实现了多语言的 Agent 中断检测。当用户在 Agent 执行过程中发送"停"、"stop"、"やめて"、"стоп"等中断信号时，系统需要立即识别并终止当前操作。
+一个有趣的小模块：`crates/octos-core/src/abort.rs` 实现了多语言的 Agent 中断检测。当用户在 Agent 执行过程中发送"停"、"stop"、"やめて"、"стоп"等中断信号时，系统需要立即识别并终止当前操作。
 
-`ABORT_TRIGGERS` 数组（`abort.rs:32-71`）包含 9 种语言、28 个触发词（源文件顶部注释写 30+，以数组实际条目数为准）。`is_abort_trigger()`（`abort.rs:6-13`）对输入进行 trim + lowercase 后精确匹配。`abort_response()`（`abort.rs:15-30`）返回与触发语言匹配的本地化取消确认。
+`ABORT_TRIGGERS` 数组（`crates/octos-core/src/abort.rs:32-71`）包含 9 种语言、28 个触发词（源文件顶部注释写 30+，以数组实际条目数为准）。`is_abort_trigger()`（`crates/octos-core/src/abort.rs:6-13`）对输入进行 trim + lowercase 后精确匹配。`abort_response()`（`crates/octos-core/src/abort.rs:15-30`）返回与触发语言匹配的本地化取消确认。
 
 代码注释还记录了故意排除的词："wait"、"exit"、"para" 在正常对话中出现频率太高，会导致误判。这是一个务实的设计选择：宁可漏掉一些中断信号（用户可以再说一次），也不要在正常对话中误触发中断。
 
@@ -519,15 +519,15 @@ octos-core 在 2026 年下半年又收进了七个模块。表面上看 core 变
 
 | 文件 | 行数 | 定位 |
 |---|---|---|
-| `abort.rs` | 120 | 多语言中断触发词检测：9 种语言 28 个取消词，识别聊天消息里的"停"，用于取消在途 Agent 操作 |
-| `app_ui.rs` | 445 | 面向 App 客户端的稳定 UI API 层，刻意位于 draft JSON-RPC wire 协议之上，让 TUI / App 依赖 app 概念而非 wire 细节 |
-| `app_ui_codec.rs` | 345 | AppUI 共享的 JSON-RPC 文本帧编解码：传输中立的帧规则，供 WebSocket 文本帧与 stdio NDJSON 复用 |
-| `env_hygiene.rs` | 230 | 子进程环境卫生：进程注入变量 denylist、秘密名启发式与 `Command` 消毒器，agent spawner 与 core 自身的 git 操作共用一份 |
-| `gateway.rs` | 182 | 基于频道的网关消息类型：入站 / 出站消息与来源标记 `MessageOrigin` |
-| `git_worktree.rs` | 1,579 | 共享 `git worktree` 管道：让 fleet-worker 池为每个任务分配真实 worktree，而无需依赖 octos-agent |
-| `session_scope.rs` | 1,880 | SessionScope：octos 组件文件系统访问的单一契约，所有组件必须由它派生工作目录并校验路径，禁止各自从 raw 输入推算 |
+| `crates/octos-core/src/abort.rs` | 120 | 多语言中断触发词检测：9 种语言 28 个取消词，识别聊天消息里的"停"，用于取消在途 Agent 操作 |
+| `crates/octos-core/src/app_ui.rs` | 445 | 面向 App 客户端的稳定 UI API 层，刻意位于 draft JSON-RPC wire 协议之上，让 TUI / App 依赖 app 概念而非 wire 细节 |
+| `crates/octos-core/src/app_ui_codec.rs` | 345 | AppUI 共享的 JSON-RPC 文本帧编解码：传输中立的帧规则，供 WebSocket 文本帧与 stdio NDJSON 复用 |
+| `crates/octos-core/src/env_hygiene.rs` | 230 | 子进程环境卫生：进程注入变量 denylist、秘密名启发式与 `Command` 消毒器，agent spawner 与 core 自身的 git 操作共用一份 |
+| `crates/octos-core/src/gateway.rs` | 182 | 基于频道的网关消息类型：入站 / 出站消息与来源标记 `MessageOrigin` |
+| `crates/octos-core/src/git_worktree.rs` | 1,579 | 共享 `git worktree` 管道：让 fleet-worker 池为每个任务分配真实 worktree，而无需依赖 octos-agent |
+| `crates/octos-core/src/session_scope.rs` | 1,880 | SessionScope：octos 组件文件系统访问的单一契约，所有组件必须由它派生工作目录并校验路径，禁止各自从 raw 输入推算 |
 
-`session_scope.rs` 和 `git_worktree.rs` 值得多看一眼。前者把"组件如何确定工作目录"从各自为政的 raw 输入推算，收拢成一份显式契约：`solo` / `multi_tenant` 两种 `ScopeMode`、路径分类结果、安全 session id 校验都在类型里。后者的顶部注释明说这是从 octos-agent 的 spawn 工具"借魂"上来的纯增量模块：agent 侧经过重重审查的旧实现保持原样，fleet-worker 走新路径，两者暂不合并。这两个例子给出了 core 边界的实际判据：进 core 的不是"最小的类型集"，而是"任何上层各留一份副本都会漂移的契约"。七个模块各自的实现细节属于后续章节，本章只做定位。
+`crates/octos-core/src/session_scope.rs` 和 `crates/octos-core/src/git_worktree.rs` 值得多看一眼。前者把"组件如何确定工作目录"从各自为政的 raw 输入推算，收拢成一份显式契约：`solo` / `multi_tenant` 两种 `ScopeMode`、路径分类结果、安全 session id 校验都在类型里。后者的顶部注释明说这是从 octos-agent 的 spawn 工具"借魂"上来的纯增量模块：agent 侧经过重重审查的旧实现保持原样，fleet-worker 走新路径，两者暂不合并。这两个例子给出了 core 边界的实际判据：进 core 的不是"最小的类型集"，而是"任何上层各留一份副本都会漂移的契约"。七个模块各自的实现细节属于后续章节，本章只做定位。
 
 ---
 
@@ -550,7 +550,7 @@ octos-core 在 2026 年下半年又收进了七个模块。表面上看 core 变
 >
 > 优势：
 > - 极少变更，提供稳定的类型基础
-> - 编译边界清晰（octos-core 当前 22,313 行 Rust 源文件，剔除 ui_protocol_tests.rs 后约 15,005 行，其中大头是 UI Protocol wire 类型与配套测试）
+> - 编译边界清晰（octos-core 当前 22,313 行 Rust 源文件，剔除 crates/octos-cli/src/api/ui_protocol_tests.rs 后约 15,005 行，其中大头是 UI Protocol wire 类型与配套测试）
 > - 依赖图清晰：所有 crate 依赖 core 的类型，但 core 不依赖任何人
 >
 > 劣势：
@@ -567,7 +567,7 @@ octos-core 在 2026 年下半年又收进了七个模块。表面上看 core 变
 
 ## 2.10 本章回顾
 
-octos-core 用 22,313 行 Rust 源文件（剔除 ui_protocol_tests.rs 后约 15,005 行）定义了整个系统的领域语言：
+octos-core 用 22,313 行 Rust 源文件（剔除 crates/octos-cli/src/api/ui_protocol_tests.rs 后约 15,005 行）定义了整个系统的领域语言：
 
 1. Task 状态机：用 Rust 枚举编码合法状态和转换，在类型层面消除非法状态组合。UUID v7 提供时间排序，五维 TokenUsage 支持精细的成本追踪。
 
@@ -608,8 +608,8 @@ octos-core 用 22,313 行 Rust 源文件（剔除 ui_protocol_tests.rs 后约 15
 
 ## 版本演化说明
 
-> 本章分析基于 octos main @ `9c157101`（2026-09-02 勘误核对）：`crates/octos-core/src/*.rs` 全量 22,313 行（15 个源文件，其中 `ui_protocol_tests.rs` 7,308 行），外部依赖为 serde / serde_json / chrono / uuid / eyre / tracing / sha2，全部引用行号经 `assets/ch02-refcheck.md` 逐条复核。
+> 本章分析基于 octos main @ `9c157101`（2026-09-02 勘误核对）：`crates/octos-core/src/*.rs` 全量 22,313 行（15 个源文件，其中 `crates/octos-cli/src/api/ui_protocol_tests.rs` 7,308 行），外部依赖为 serde / serde_json / chrono / uuid / eyre / tracing / sha2，全部引用行号经 `assets/ch02-refcheck.md` 逐条复核。
 >
-> 本次勘误要点：`TurnId` 区间更新为 `ui_protocol.rs:607-623`；`api_key_not_set` 摘录按 `error.rs:89-99` 源码改写为多行 export / config.json 提示；Error 的 Display 区间修正为 `error.rs:174-224`；2.5.3 按 d8125d18（2026-08-31）改写为 `truncate_head_tail_report` / `TruncationReport` 结构化截断；`tool_output_limit` 限额表更新（search、deep_search、news_fetch 均为 200,000）；channel 白名单 15 改 19（补 dingtalk、line、local、wechat）；eyre / color-eyre 依赖声明位于根 `Cargo.toml:97-98`；ABORT_TRIGGERS 实为 28 个触发词；依赖侧栏补 tracing、sha2；新增「core 的边界」小节归类 2026 年新增的七个源文件。
+> 本次勘误要点：`TurnId` 区间更新为 `crates/octos-core/src/ui_protocol.rs:607-623`；`api_key_not_set` 摘录按 `crates/octos-core/src/error.rs:89-99` 源码改写为多行 export / config.json 提示；Error 的 Display 区间修正为 `crates/octos-core/src/error.rs:174-224`；2.5.3 按 d8125d18（2026-08-31）改写为 `truncate_head_tail_report` / `TruncationReport` 结构化截断；`tool_output_limit` 限额表更新（search、deep_search、news_fetch 均为 200,000）；channel 白名单 15 改 19（补 dingtalk、line、local、wechat）；eyre / color-eyre 依赖声明位于根 `Cargo.toml:97-98`；ABORT_TRIGGERS 实为 28 个触发词；依赖侧栏补 tracing、sha2；新增「core 的边界」小节归类 2026 年新增的七个源文件。
 >
 > 阅读后续版本时，除了 Task / Message / Error，还应核对 identity newtypes、`SessionSummary` ABI、UI Protocol capabilities 这些跨 crate wire 类型。

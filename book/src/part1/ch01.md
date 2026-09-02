@@ -14,28 +14,28 @@ octos 不是 chatbot 框架，而是一个多租户 AI Agent 操作系统：同�
 
 ### 1.1.1 挑战一：安全隔离，59 个工具源文件就是 59 个攻击面入口
 
-设想一个真实场景：租户 A 的 Agent 在总结一篇网页时被 prompt 注入，恶意指令试图读取租户 B 的会话历史，或者执行 `rm -rf /`。在多租户环境里这不是理论风险。octos 的攻击面可以从事实表直接量化：`crates/octos-agent/src/tools/` 下有 59 个工具源文件（口径：`ls crates/octos-agent/src/tools/*.rs | wc -l`）。注意这是源文件数，不是工具数，其中包含 `mod.rs`、`registry.rs`、`policy.rs` 这类框架文件。
+设想一个真实场景：租户 A 的 Agent 在总结一篇网页时被 prompt 注入，恶意指令试图读取租户 B 的会话历史，或者执行 `rm -rf /`。在多租户环境里这不是理论风险。octos 的攻击面可以从事实表直接量化：`crates/octos-agent/src/tools/` 下有 59 个工具源文件（口径：`ls crates/octos-agent/src/tools/*.rs | wc -l`）。注意这是源文件数，不是工具数，其中包含 `crates/octos-agent/src/tools/mod.rs`、`crates/octos-agent/src/tools/registry.rs`、`crates/octos-agent/src/prompt_guard.rs` 这类框架文件。
 
-每个真正暴露给 LLM 的工具（`shell`、`browser`、`web_fetch`、`write_file`、`spawn` 等）都是一条独立的攻击路径。再加上 `crates/octos-bus/src/` 下的 **17 个 `*_channel.rs` 频道源文件**（Telegram、Discord、Slack、WhatsApp、飞书、邮件、Matrix、企业微信、钉钉、QQ Bot、Twilio、Line 等；其中 `api_channel.rs` 与 `cli_channel.rs` 是两个内部通道，并非全部对外），平台在物理上就是「一张接满了外部消息网络的、能执行代码的图」。每接入一个频道，就多一个入站消息的信任边界；每注册一个工具，就多一个出站副作用的通道。
+每个真正暴露给 LLM 的工具（`shell`、`browser`、`web_fetch`、`write_file`、`spawn` 等）都是一条独立的攻击路径。再加上 `crates/octos-bus/src/` 下的 **17 个 `*crates/octos-bus/src/cli_channel.rs` 频道源文件**（Telegram、Discord、Slack、WhatsApp、飞书、邮件、Matrix、企业微信、钉钉、QQ Bot、Twilio、Line 等；其中 `crates/octos-bus/src/api_channel.rs` 与 `crates/octos-bus/src/cli_channel.rs` 是两个内部通道，并非全部对外），平台在物理上就是「一张接满了外部消息网络的、能执行代码的图」。每接入一个频道，就多一个入站消息的信任边界；每注册一个工具，就多一个出站副作用的通道。
 
 Agent 场景的安全隔离比传统 Web 服务难，原因有三：
 
 1. 工具调用是核心能力而非旁路。Web 服务的危险操作通常收敛到少数几个 handler；Agent 的每一次循环迭代都可能触发任意工具组合，且调用序列由 LLM 生成、不可预先枚举。防御必须下沉到「每次调用」的粒度，octos 因此在工具层实现了 deny-wins 的策略引擎与审批流（详见第 6、7 章）。
 2. Prompt 注入是新型攻击向量。它发生在自然语言层面，WAF 式的正则规则基本失效。攻击载荷可以藏在一篇被 `web_fetch` 抓回来的文档里，再借工具调用落地为文件写入或命令执行。
-3. 隔离边界必须是进程级的。语言层的权限检查只能挡「合法 API 的滥用」，挡不住 Shell 命令本身。octos 把真正的沙箱子系统放在 `octos-agent` 内部的 `crates/octos-agent/src/sandbox/`（六个文件：`bwrap.rs`、`docker.rs`、`landlock.rs`、`macos.rs`、`windows.rs`、`mod.rs`），分别对接 Linux 的 bubblewrap/Landlock、Docker、macOS 的 sandbox-exec 与 Windows 的 AppContainer（`../octos/crates/octos-agent/src/sandbox/mod.rs:1-23`）。第 7 章会逐个拆解。
+3. 隔离边界必须是进程级的。语言层的权限检查只能挡「合法 API 的滥用」，挡不住 Shell 命令本身。octos 把真正的沙箱子系统放在 `octos-agent` 内部的 `crates/octos-agent/src/sandbox/`（六个文件：`crates/octos-agent/src/sandbox/bwrap.rs`、`crates/octos-agent/src/sandbox/docker.rs`、`crates/octos-agent/src/sandbox/landlock.rs`、`crates/octos-agent/src/sandbox/macos.rs`、`crates/octos-agent/src/sandbox/windows.rs`、`crates/octos-agent/src/sandbox/mod.rs`），分别对接 Linux 的 bubblewrap/Landlock、Docker、macOS 的 sandbox-exec 与 Windows 的 AppContainer（`crates/octos-agent/src/sandbox/mod.rs:1-23`）。第 7 章会逐个拆解。
 
 这三层防御（语言内存安全 → 工具策略 → 进程沙箱）能成立的前提，是承载它们的运行时本身不引入新的内存安全漏洞。这正是 1.2 节语言选型的第一个约束。
 
 ### 1.1.2 挑战二：并发，同一进程里的三重并发面
 
-第二个挑战同样可以量化。Gateway 模式下，17 个频道的入站消息同时到达；octos 用一个 `tokio::sync::Semaphore` 把并发会话数压在配置上限内（默认 10，`../octos/crates/octos-cli/src/config.rs:1633-1635`），信号量在 Gateway 启动时创建（`../octos/crates/octos-cli/src/commands/gateway/gateway_runtime.rs:1731-1732`）：
+第二个挑战同样可以量化。Gateway 模式下，17 个频道的入站消息同时到达；octos 用一个 `tokio::sync::Semaphore` 把并发会话数压在配置上限内（默认 10，`crates/octos-cli/src/config.rs:1633-1635`），信号量在 Gateway 启动时创建（`crates/octos-cli/src/commands/gateway/gateway_runtime.rs:1731-1732`）：
 
 ```rust
 // Semaphore to bound concurrent session processing
 let concurrency_semaphore = Arc::new(Semaphore::new(gw_config.max_concurrent_sessions));
 ```
 
-但「限流」只是并发的第一重。第二重在 Agent 循环内部：单次迭代里 LLM 可能一次下发多个工具调用，octos 把每个调用 `tokio::spawn` 成独立任务再 `join_all` 聚合、保持调用顺序（`../octos/crates/octos-agent/src/agent/execution.rs:598` 的 `spawn_tool_task` 与 `:2483` 的 `execute_tools`）。第三重在进程外：后台 Cron/Heartbeat 定时唤醒会话、子 Agent 同步阻塞或后台异步双模式、fleet worker 独立进程消费任务，它们共享同一套会话状态与消息总线。
+但「限流」只是并发的第一重。第二重在 Agent 循环内部：单次迭代里 LLM 可能一次下发多个工具调用，octos 把每个调用 `tokio::spawn` 成独立任务再 `join_all` 聚合、保持调用顺序（`crates/octos-agent/src/agent/execution.rs:598` 的 `spawn_tool_task` 与 `:2483` 的 `execute_tools`）。第三重在进程外：后台 Cron/Heartbeat 定时唤醒会话、子 Agent 同步阻塞或后台异步双模式、fleet worker 独立进程消费任务，它们共享同一套会话状态与消息总线。
 
 并发本身不是问题，并发中的正确性才是：
 
@@ -54,7 +54,7 @@ let concurrency_semaphore = Arc::new(Semaphore::new(gw_config.max_concurrent_ses
 
 第二，内存是多租户的硬约束。 每个会话都持有对话历史、工具状态与上下文窗口。运行时本身每会话的开销乘上并发会话数，就是必须提前规划的容量：解释型运行时的每会话基线开销通常显著高于编译型，具体差多少要按目标并发数实测容量，100 个并发会话时这笔差值直接决定还能不能再挤进一个容器。
 
-第三，热路径在框架里，不在 LLM 里。 SSE 流式解析、消息频道的分片切割、上下文压缩的截断、工具输出的尺寸估算，这些都在每次迭代里执行。octos-core 里有一个典型的小函数 `truncate_utf8`（`../octos/crates/octos-core/src/utils.rs:6-16`）：
+第三，热路径在框架里，不在 LLM 里。 SSE 流式解析、消息频道的分片切割、上下文压缩的截断、工具输出的尺寸估算，这些都在每次迭代里执行。octos-core 里有一个典型的小函数 `truncate_utf8`（`crates/octos-core/src/utils.rs:6-16`）：
 
 ```rust
 pub fn truncate_utf8(s: &mut String, max_len: usize, suffix: &str) {
@@ -80,7 +80,7 @@ octos 的候选集其实只有三个：Python（LangChain/AutoGen 生态最厚�
 
 ### 1.2.1 安全维度：内存安全是防御纵深的第零层
 
-1.1.1 节的三层防御中，最底层是「运行时自身无内存安全漏洞」。一个用 C/C++ 写的 Agent 运行时，沙箱做得再好，也可能在解析恶意构造的 SSE 分片或 WebSocket 帧时自己先倒下，因为解析不可信输入正是内存安全漏洞的高发区。octos 的做法很直接：workspace 根 `Cargo.toml` 统一 lint（`../octos/Cargo.toml:50-51`）：
+1.1.1 节的三层防御中，最底层是「运行时自身无内存安全漏洞」。一个用 C/C++ 写的 Agent 运行时，沙箱做得再好，也可能在解析恶意构造的 SSE 分片或 WebSocket 帧时自己先倒下，因为解析不可信输入正是内存安全漏洞的高发区。octos 的做法很直接：workspace 根 `Cargo.toml` 统一 lint（`Cargo.toml:50-51`）：
 
 ```toml
 [workspace.lints.rust]
@@ -119,7 +119,7 @@ Rust 的答案是把并发正确性编码进类型系统：`Send`（可跨线程
 
 Agent 框架的性能画像很特殊：大量短生命周期分配（消息、分片、工具结果）、长驻任务（会话、频道连接）、以及必须平滑的流式路径（SSE 解析逐 token 转发）。GC 语言在这种画像下的典型症状是：停顿本身不频繁，但停顿发生在哪次迭代里不可预测：今天压测 p99 很好，明天某条会话的长对话触发大回收，流式输出肉眼可见地卡一下。
 
-Rust 无 GC：分配与释放跟随着所有权在编译期确定，`Drop` 析构让文件描述符、子进程句柄、锁的释放都确定性地发生。1.1.3 节的 `truncate_utf8` 已经展示了「避免分配」的写法；再往上一层，octos-agent 的工具 trait 签名（`../octos/crates/octos-agent/src/tools/mod.rs:609-642`，节选）：
+Rust 无 GC：分配与释放跟随着所有权在编译期确定，`Drop` 析构让文件描述符、子进程句柄、锁的释放都确定性地发生。1.1.3 节的 `truncate_utf8` 已经展示了「避免分配」的写法；再往上一层，octos-agent 的工具 trait 签名（`crates/octos-agent/src/tools/mod.rs:609-642`，节选）：
 
 ```rust
 #[async_trait]
@@ -158,8 +158,8 @@ pub trait Tool: Send + Sync {
 | crate 目录总数 | 26 | `ls crates \| wc -l`；= 23 个 `octos-*` crate + `app-skills` + `platform-skills` + `octos-web` 三个目录 |
 | Rust 总行数 | 700,915 | `find crates -name '*.rs' \| xargs wc -l \| tail -1`；仅统计 `.rs` 文件，`octos-web` 计 0 |
 | workspace 成员数 | 38 | 根 `Cargo.toml` `members` 列表长度；26 目录中 `app-skills`/`platform-skills` 是多 crate 目录（各含 14/1 个成员），23+14+1=38，`octos-web` 不是成员 |
-| 消息频道源文件 | 17 | `ls crates/octos-bus/src/*_channel.rs \| wc -l` |
-| 工具源文件 | 59 | `ls crates/octos-agent/src/tools/*.rs \| wc -l`；是文件数不是工具数（含 `mod.rs`、`registry.rs`、测试等框架文件） |
+| 消息频道源文件 | 17 | `ls crates/octos-bus/src/*crates/octos-bus/src/cli_channel.rs \| wc -l` |
+| 工具源文件 | 59 | `ls crates/octos-agent/src/tools/*.rs \| wc -l`；是文件数不是工具数（含 `crates/octos-agent/src/tools/mod.rs`、`crates/octos-agent/src/tools/registry.rs`、测试等框架文件） |
 
 26 与 38 的关系值得单独强调：目录数 ≠ 成员数 ≠ 核心库数。`crates/app-skills/` 没有顶层 `Cargo.toml`，它是一个装着 14 个独立二进制 crate 的目录；`platform-skills/` 装 1 个（voice）；`octos-web` 连 Rust 都没有。把这四个数字混为一谈，是外部读者对 octos 结构最常见的第一重误解。
 
@@ -183,11 +183,11 @@ pub trait Tool: Send + Sync {
 
 外部材料（包括本书 v1 版稿）对 octos 结构有三处系统性误传，读源码前必须纠正：
 
-澄清一：`octos-sandbox` 不是沙箱子系统。 它的 `Cargo.toml` description 是 "Platform sandbox helper for octos"，1,468 行，`[dependencies]` 只有 clap 和 eyre，零 `octos-*` 依赖。它是随平台分发的辅助二进制。真正的沙箱在 `octos-agent` 内部：`crates/octos-agent/src/sandbox/` 下六个文件（`bwrap.rs`、`docker.rs`、`landlock.rs`、`macos.rs`、`windows.rs`、`mod.rs`），覆盖 Linux bubblewrap/Landlock、Docker、macOS sandbox-exec、Windows AppContainer 与无沙箱回退（`../octos/crates/octos-agent/src/sandbox/mod.rs:1-23`）。谈「octos 沙箱」，指的永远是 `octos-agent::sandbox`。
+澄清一：`octos-sandbox` 不是沙箱子系统。 它的 `Cargo.toml` description 是 "Platform sandbox helper for octos"，1,468 行，`[dependencies]` 只有 clap 和 eyre，零 `octos-*` 依赖。它是随平台分发的辅助二进制。真正的沙箱在 `octos-agent` 内部：`crates/octos-agent/src/sandbox/` 下六个文件（`crates/octos-agent/src/sandbox/bwrap.rs`、`crates/octos-agent/src/sandbox/docker.rs`、`crates/octos-agent/src/sandbox/landlock.rs`、`crates/octos-agent/src/sandbox/macos.rs`、`crates/octos-agent/src/sandbox/windows.rs`、`crates/octos-agent/src/sandbox/mod.rs`），覆盖 Linux bubblewrap/Landlock、Docker、macOS sandbox-exec、Windows AppContainer 与无沙箱回退（`crates/octos-agent/src/sandbox/mod.rs:1-23`）。谈「octos 沙箱」，指的永远是 `octos-agent::sandbox`。
 
 澄清二：`octos-web` 不含 Rust、不是 workspace 成员。 它是 TypeScript 项目（`package.json`/`tsconfig.json`/`vitest.config.ts`），0 个 `.rs` 文件；根 `Cargo.toml` 的 `members` 里 grep 不到 `octos-web`。它是前端静态资源，不在 Cargo 依赖图内，拓扑图里它是孤立节点。
 
-澄清三：不存在 harness crate。 `ls crates | grep harness` 零命中。harness 是 `octos-agent` 内部的模块：`src/lib.rs:30-31` 声明 `pub mod harness_errors;` 与 `pub mod harness_events;` 两个平级模块文件。别把 `app-skills/harness-starter-*` 四个脚手架当成 harness 本体，它们是面向用户的起步模板，不是 harness 实现。第 10 章会专门讲 Harness。
+澄清三：不存在 harness crate。 `ls crates | grep harness` 零命中。harness 是 `octos-agent` 内部的模块：`crates/octos-agent/src/lib.rs:30-31` 声明 `pub mod harness_errors;` 与 `pub mod harness_events;` 两个平级模块文件。别把 `app-skills/harness-starter-*` 四个脚手架当成 harness 本体，它们是面向用户的起步模板，不是 harness 实现。第 10 章会专门讲 Harness。
 
 ### 1.3.4 依赖拓扑图：63 条边一张图
 

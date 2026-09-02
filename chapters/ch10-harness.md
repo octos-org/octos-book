@@ -8,12 +8,12 @@
 
 | 模块 | 行数 | 首行 `//!` 文档 |
 |---|---|---|
-| `validators.rs` | 2,772 | `Declarative validator runner (harness M4.3).` |
-| `harness_events.rs` | 2,789 | `Structured harness event ABI and local sink transport.` |
-| `abi_schema.rs` | 349 | `Harness ABI schema versioning.` |
-| `workspace_policy.rs` | 3,165 | （无 `//!`，首行为 `use std::collections::BTreeMap;`） |
-| `harness_errors.rs` | 745 | `Structured harness error taxonomy (M6.1, issue #488).` |
-| `hooks.rs` | 2,856 | `Hook/lifecycle system for running shell commands at agent lifecycle points.` |
+| `crates/octos-agent/src/validators.rs` | 2,772 | `Declarative validator runner (harness M4.3).` |
+| `crates/octos-agent/src/harness_events.rs` | 2,789 | `Structured harness event ABI and local sink transport.` |
+| `crates/octos-agent/src/abi_schema.rs` | 349 | `Harness ABI schema versioning.` |
+| `crates/octos-agent/src/workspace_policy.rs` | 3,165 | （无 `//!`，首行为 `use std::collections::BTreeMap;`） |
+| `crates/octos-agent/src/harness_errors.rs` | 745 | `Structured harness error taxonomy (M6.1, issue #488).` |
+| `crates/octos-agent/src/hooks.rs` | 2,856 | `Hook/lifecycle system for running shell commands at agent lifecycle points.` |
 
 合计 12,676 行。没有 harness crate,这六份文件都住在 `crates/octos-agent/src/` 下，加上 `crates/app-skills/` 里的四个 starter 目录（audio/coding/generic/report），才是 harness 的全部。这个澄清本身有信息量：harness 不是又一层抽象盒子，而是把校验、事件、版本化直接织进 Agent 运行时。
 
@@ -122,7 +122,7 @@ sequenceDiagram
 
 台账是 append-only 的：`ValidatorLedger`（`crates/octos-agent/src/validators.rs:298`）只提供 `append` 与 `read_all` 两个动作，后者逐行反序列化并顺手把 Wave-3a 之前的旧记录归一化成新 tier 语义。契约测试 `should_persist_outcomes_and_replay_them_byte_for_byte`（`crates/octos-agent/tests/validator_runner.rs:490`）验证的就是「写进去什么样、重读回来就什么样」。回放不靠日志考古，靠结构化记录。
 
-17 个用例的 `validator_runner.rs` 把这张时序图的每条边都钉住了：required 命令校验失败要拦（`crates/octos-agent/tests/validator_runner.rs:123`）、optional 失败只告警（`:218`）、超时杀子进程（`:329`）、stderr 进结果供操作员查看（`:293`）、`BLOCKED_ENV_VARS` 即便显式设置也被剥掉（`:531`）。
+17 个用例的 `crates/octos-agent/tests/validator_runner.rs` 把这张时序图的每条边都钉住了：required 命令校验失败要拦（`crates/octos-agent/tests/validator_runner.rs:123`）、optional 失败只告警（`:218`）、超时杀子进程（`:329`）、stderr 进结果供操作员查看（`:293`）、`BLOCKED_ENV_VARS` 即便显式设置也被剥掉（`:531`）。
 
 > **工程决策：为什么超时与拒答都算 Error 而不是 Fail**
 > `ValidatorStatus`（`crates/octos-agent/src/validators.rs:131`）把终态分为 `Pass` / `Fail` / `Timeout` / `Error` 四档：Fail 表示「校验跑完了、结论是不合格」，Timeout 与 Error 表示「校验根本没跑成」。这个区分对门禁语义至关重要:产物不合格可以打回让 Agent 修，而策略拒绝或环境损坏时「打回」只会让 Agent 对着坏环境空转。消费方（如 Ch16 的门禁）只需要看 `required && status != Pass` 这一个条件，四种终态就能各归其位。
@@ -139,7 +139,7 @@ sequenceDiagram
 
 ### 10.2.1 `octos.harness.event.v1` 信封
 
-第一支柱回答终点判定，第二支柱回答过程叙事：运行中都发生了什么、外部组件如何听到。这份需求落在 `harness_events.rs`（2,789 行，六模块中最大）。所有事件共用一个信封：
+第一支柱回答终点判定，第二支柱回答过程叙事：运行中都发生了什么、外部组件如何听到。这份需求落在 `crates/octos-agent/src/harness_events.rs`（2,789 行，六模块中最大）。所有事件共用一个信封：
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -158,7 +158,7 @@ pub struct HarnessEvent {
 
 事件的传递通道是本地 JSONL 文件：外部 app skill 进程把单行事件写进 `OCTOS_EVENT_SINK` 指向的文件，runtime 校验 schema 后 tail 并折叠进任务快照，再向 `/api/events/harness` 广播类型化帧。这条 side-channel 与 stdout 工具结果协议分离：stdout 回答「工具返回了什么」，sink 回答「运行中发生了什么」。所以同一个 app skill 进程有两类输出通道，职责不混。这条通道上还有两道防线：事件写入前先做 schema 校验，单行超过大小上限的记录整条拒绝，脏数据进不了流；关联上下文由环境变量注入，`OCTOS_SESSION_ID` 与 `OCTOS_TASK_ID`（以及等价的 `OCTOS_HARNESS_SESSION_ID` / `OCTOS_HARNESS_TASK_ID`）让每条事件都能归到具体会话与任务，事后审计不用猜来源。对第 16 章的 fleet 门禁与第 17 章的 swarm 聚合而言，这套按任务归集事件的能力就是它们消费数据的地基，本章只立契约，不展开消费侧。
 
-错误也有专属事件形态：`HarnessErrorEvent`（`crates/octos-agent/src/harness_errors.rs:166`）作为 `kind: "error"` 挂在同一个信封下，携带 snake_case 的变体标识与恢复提示，schema 版本常量 `HARNESS_ERROR_SCHEMA_VERSION` 注册在 abi_schema。契约测试 `should_round_trip_harness_error_through_sink`（`crates/octos-agent/tests/harness_errors.rs:154`）验证错误事件经 sink 写入再读回不变形；`should_emit_harness_event_on_error_classification`（`:126`）验证每次错误分类都产生事件。错误分类学本身（`RecoveryHint` `crates/octos-agent/src/harness_errors.rs:47` 与 `HarnessError` `crates/octos-agent/src/harness_errors.rs:93` 的五提示十数变体）第 5 章已随恢复链讲透，本章只强调两点。其一，错误分类与事件 ABI 的关系是「分类决定事件载荷」：`variant_name()` 是冻结的命名，事件消费者据此做确定性分支，不碰自然语言 message。其二，分类的粒度是为可观测性设计的：`RecoveryHint` 只有五个值（backoff_retry、switch_provider、compact_context、fail_fast、bug），可以直接当 Prometheus 标签用而不会基数爆炸；`HarnessError` 的变体则细到能区分「401 认证失败」与「403 配额耗尽」这两种 4xx 的情况，让操作员看到的提示分别是「检查 API key」与「充值或换供应商」。18 个用例的 `harness_errors.rs` 把这套映射钉得很实：429 归 RateLimited 配 BackoffRetry（`crates/octos-agent/tests/harness_errors.rs:26`），5xx 归 ProviderUnavailable 配 SwitchProvider（`:58`），网络错误归 BackoffRetry（`:77`），同样的输入永远分到同样的变体（`:110`），403 带 quota 标记归 Quota、不带归 Authentication（`:248`、`:271`）。同一分类经 eyre 中转也不失真（`:280`），这是把分类放进类型而不放进出错现场的回报。
+错误也有专属事件形态：`HarnessErrorEvent`（`crates/octos-agent/src/harness_errors.rs:166`）作为 `kind: "error"` 挂在同一个信封下，携带 snake_case 的变体标识与恢复提示，schema 版本常量 `HARNESS_ERROR_SCHEMA_VERSION` 注册在 abi_schema。契约测试 `should_round_trip_harness_error_through_sink`（`crates/octos-agent/tests/harness_errors.rs:154`）验证错误事件经 sink 写入再读回不变形；`should_emit_harness_event_on_error_classification`（`:126`）验证每次错误分类都产生事件。错误分类学本身（`RecoveryHint` `crates/octos-agent/src/harness_errors.rs:47` 与 `HarnessError` `crates/octos-agent/src/harness_errors.rs:93` 的五提示十数变体）第 5 章已随恢复链讲透，本章只强调两点。其一，错误分类与事件 ABI 的关系是「分类决定事件载荷」：`variant_name()` 是冻结的命名，事件消费者据此做确定性分支，不碰自然语言 message。其二，分类的粒度是为可观测性设计的：`RecoveryHint` 只有五个值（backoff_retry、switch_provider、compact_context、fail_fast、bug），可以直接当 Prometheus 标签用而不会基数爆炸；`HarnessError` 的变体则细到能区分「401 认证失败」与「403 配额耗尽」这两种 4xx 的情况，让操作员看到的提示分别是「检查 API key」与「充值或换供应商」。18 个用例的 `crates/octos-agent/src/harness_errors.rs` 把这套映射钉得很实：429 归 RateLimited 配 BackoffRetry（`crates/octos-agent/tests/harness_errors.rs:26`），5xx 归 ProviderUnavailable 配 SwitchProvider（`:58`），网络错误归 BackoffRetry（`:77`），同样的输入永远分到同样的变体（`:110`），403 带 quota 标记归 Quota、不带归 Authentication（`:248`、`:271`）。同一分类经 eyre 中转也不失真（`:280`），这是把分类放进类型而不放进出错现场的回报。
 
 ---
 
@@ -166,7 +166,7 @@ pub struct HarnessEvent {
 
 ### 10.3.1 五个耐久类型与 `check_supported`
 
-声明会被存档，事件会被回放，于是第三个问题出现了：跨了版本的组件还能不能听懂彼此？这是第三支柱 `abi_schema.rs` 的领地。harness 对外暴露五个耐久序列化类型：`WorkspacePolicy`、`HookPayload`、`ProgressEvent`（发出形状）、`TaskResult`、`SessionSummary`。`abi_schema.rs` 为每个类型集中维护版本常量，全部当前值为 1。这 349 行的小模块只干一件事：版本护栏。核心函数只有九行（`crates/octos-agent/src/abi_schema.rs:159`）：
+声明会被存档，事件会被回放，于是第三个问题出现了：跨了版本的组件还能不能听懂彼此？这是第三支柱 `crates/octos-agent/src/abi_schema.rs` 的领地。harness 对外暴露五个耐久序列化类型：`WorkspacePolicy`、`HookPayload`、`ProgressEvent`（发出形状）、`TaskResult`、`SessionSummary`。`crates/octos-agent/src/abi_schema.rs` 为每个类型集中维护版本常量，全部当前值为 1。这 349 行的小模块只干一件事：版本护栏。核心函数只有九行（`crates/octos-agent/src/abi_schema.rs:159`）：
 
 ```rust
 pub fn check_supported(
@@ -202,7 +202,7 @@ flowchart TD
 
 为什么这扇门只朝一个方向关？「旧 runtime 读新 payload」与「新 runtime 读旧 payload」的风险天然不对称：旧数据缺的只是新字段，serde 缺省值补零即可安全读出，读到的语义是「老形状」，正确；而旧 runtime 遇上新 payload，新字段可能是旧代码无法理解的语义变更（比如一个字段从单值变成列表），任何「尽力解析」都是在猜，猜错的代价是静默错读。工程权衡因此落在保守侧：宁可让操作员看到一条带类型名、实读版本与支持上限的报错并升级 octos，也不让坏数据无声流过整条管线。这也是 `check_supported` 的错误消息固定附带「upgrade octos to a newer release」提示的原因（`crates/octos-agent/src/abi_schema.rs:144-151` 的 Display 实现）：fail closed 的报错必须同时给出解法，否则只是把故障换个形态。反向的「新读旧」则交给缺省值：五个耐久类型的 `schema_version` 字段全部用 `#[serde(default = "...")]` 标注，2026 年 4 月前的旧策略文件零改动继续加载，升级 octos 不需要迁移仪式。
 
-这套语义与 `docs/OCTOS_HARNESS_ABI_VERSIONING.md` 的五条兼容规则逐条对应：缺 `schema_version` 按 v1 反序列化；未知大版本用类型化错误拒绝、绝不 panic；同一大版本内 stable 字段含义不变，新增可选字段必须缺省为空；破坏性变更必须 bump 大版本并留双版本过渡窗口；外部消费者应先分支 `schema_version` 再读版本特定字段。三条护栏中「缺字段默认 v1」让 2026 年 4 月之前的旧策略文件今天照常加载；「超上限拒绝」保证旧 runtime 不会错读未来 payload。`should_reject_future_workspace_policy_schema_version`（`crates/octos-agent/tests/abi_compat.rs:259`）与 `should_default_workspace_policy_to_v1_when_schema_version_missing`（`:197`）把两条各钉一钉。13 个用例的 `abi_compat.rs` 用 fixture 文件驱动，覆盖四个耐久类型的新旧两端。
+这套语义与 `docs/OCTOS_HARNESS_ABI_VERSIONING.md` 的五条兼容规则逐条对应：缺 `schema_version` 按 v1 反序列化；未知大版本用类型化错误拒绝、绝不 panic；同一大版本内 stable 字段含义不变，新增可选字段必须缺省为空；破坏性变更必须 bump 大版本并留双版本过渡窗口；外部消费者应先分支 `schema_version` 再读版本特定字段。三条护栏中「缺字段默认 v1」让 2026 年 4 月之前的旧策略文件今天照常加载；「超上限拒绝」保证旧 runtime 不会错读未来 payload。`should_reject_future_workspace_policy_schema_version`（`crates/octos-agent/tests/abi_compat.rs:259`）与 `should_default_workspace_policy_to_v1_when_schema_version_missing`（`:197`）把两条各钉一钉。13 个用例的 `crates/octos-agent/tests/abi_compat.rs` 用 fixture 文件驱动，覆盖四个耐久类型的新旧两端。
 
 版本化的对象是 runtime 序列化形状，不是 skill/plugin 自己的发布版本（那是 `manifest.json` 的 version 字段），第 9 章曾区分过这两个概念，本章是它的执行机制。
 
@@ -271,7 +271,7 @@ on_verify = [
 
 4. **事件 ABI**：`octos.harness.event.v1` 信封 + `kind` 标注的载荷枚举，本地 JSONL sink 传输，validate 后入流；第 13 章 pipeline 进度与第 17 章 swarm 门禁共用这套词汇。
 
-5. **版本护栏**：五个耐久类型、`check_supported` 九行核心、缺字段默认 v1、超上限 fail closed；`abi_compat.rs` 13 用例钉住两端。
+5. **版本护栏**：五个耐久类型、`check_supported` 九行核心、缺字段默认 v1、超上限 fail closed；`crates/octos-agent/tests/abi_compat.rs` 13 用例钉住两端。
 
 6. **hooks 与安全**：十一个生命周期点、六态结果、Feedback 与 Error 严格分流；断路器按会话隔离（#2153）；project-root 校验器进沙箱、mcp-serve fail-closed（详见第 7 章）。
 

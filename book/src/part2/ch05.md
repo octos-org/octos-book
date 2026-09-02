@@ -2,7 +2,7 @@
 
 > **定位**：本章按 `crates/octos-agent/src/agent/` 的 20 个模块重组 Agent Loop 的完整叙事，讲清一次 `process_message` / `run_task` 从入口到 stop_reason 的六阶段生命周期、预算五道闸与 #27e 落盘检查点、typed retry-bucket 状态机、错误恢复三层类型，以及 goal 层续跑队列与循环的边界。前置依赖：第 2 章（octos-core 类型）、第 3 章（LlmProvider 抽象）。适用场景：想知道「一条用户消息进来之后运行时到底做了什么」的 AI 应用开发者（读者 C），以及要给 loop 提 PR 的贡献者（读者 D）；第 16 章 fleet worker 与第 18 章 goal 续跑都以本章循环为基准变体。
 
-Agent loop 的教科书定义只有一行：收到消息，调用 LLM，解析意图，要工具就执行工具，把结果喂回去，重复直到任务完成。生产级实现的全部难度藏在这行字的边界条件里：迭代上限、token 预算、空闲超时、上下文溢出、消息格式破损、重复输出、provider 故障、优雅关停。octos 把这些边界条件拆进了 `crates/octos-agent/src/agent/` 的 20 个模块：排除 `*_tests.rs` 后共 21,369 行（口径：`cat $(ls *.rs | grep -v '_tests') | wc -l`），最大模块不是主循环文件 `loop_runner.rs`（3,979 行），而是工具派发 `execution.rs`（4,730 行）。这个反直觉的事实本身就是本章的切入点：主循环的价值不在「循环」这个动词，而在它编排的决策面。本章所有行号与数字来自 `assets/ch05-facts.md`（基准 octos main @ `9c157101`，2026-09-02），正文中每个源码引用(路径加行号)都可在事实表与源码仓库核对。
+Agent loop 的教科书定义只有一行：收到消息，调用 LLM，解析意图，要工具就执行工具，把结果喂回去，重复直到任务完成。生产级实现的全部难度藏在这行字的边界条件里：迭代上限、token 预算、空闲超时、上下文溢出、消息格式破损、重复输出、provider 故障、优雅关停。octos 把这些边界条件拆进了 `crates/octos-agent/src/agent/` 的 20 个模块：排除 `*crates/octos-agent/src/agent/loop_runner_tests.rs` 后共 21,369 行（口径：`cat $(ls *.rs | grep -v '_tests') | wc -l`），最大模块不是主循环文件 `crates/octos-agent/src/agent/loop_runner.rs`（3,979 行），而是工具派发 `crates/octos-agent/src/agent/execution.rs`（4,730 行）。这个反直觉的事实本身就是本章的切入点：主循环的价值不在「循环」这个动词，而在它编排的决策面。本章所有行号与数字来自 `assets/ch05-facts.md`（基准 octos main @ `9c157101`，2026-09-02），正文中每个源码引用(路径加行号)都可在事实表与源码仓库核对。
 
 ---
 
@@ -12,34 +12,34 @@ Agent loop 的教科书定义只有一行：收到消息，调用 LLM，解析�
 
 | # | 模块 | 行数 | 一句话职责（首行文档注释） |
 |---|------|------|------|
-| 1 | `activity.rs` | 150 | Loop activity tracking for idle-timeout enforcement |
-| 2 | `append_only_audit.rs` | 364 | Append-only context audit: does a turn's request history only ever GROW? |
-| 3 | `budget.rs` | 821 | Budget tracking and enforcement for the agent loop |
-| 4 | `compaction.rs` | 358 | Context window trimming and fallback truncation |
-| 5 | `detection.rs` | 858 | Detection of repetitive output and retriable responses |
-| 6 | `execution.rs` | 4,730 | Tool execution: dispatching tool calls with hooks and timeout handling |
-| 7 | `llm_call.rs` | 988 | LLM call orchestration with lifecycle hooks and retry logic |
-| 8 | `loop_compaction.rs` | 414 | Message preparation pipeline for long-turn loop calls |
-| 9 | `loop_runner.rs` | 3,979 | Main agent loop: process_message and run_task orchestration |
-| 10 | `loop_state.rs` | 768 | Typed retry-bucket state machine for the agent loop (M6.2, issue #489) |
-| 11 | `memory.rs` | 1,062 | Initial message building and episodic memory context for the agent |
-| 12 | `message_repair.rs` | 1,260 | Message normalization, ordering repair, and tool pair validation |
-| 13 | `mod.rs` | 1,644 | Agent implementation |
-| 14 | `prompt_segments.rs` | 233 | Ordered system-prompt segments |
-| 15 | `realtime.rs` | 602 | Real-time agent loop extensions for robotic operation |
-| 16 | `rich_output.rs` | 309 | Rich output: produce a self-contained HTML document from a short brief |
-| 17 | `streaming.rs` | 1,491 | Stream consumption, shutdown handling, and cost reporting |
-| 18 | `turn_failure.rs` | 69 | Voice-turn failure projection |
-| 19 | `turn_state.rs` | 388 | Typed turn state for loop execution |
-| 20 | `verifier.rs` | 881 | Optional inference-time verifier and compact structured turn ledger |
+| 1 | `crates/octos-agent/src/agent/activity.rs` | 150 | Loop activity tracking for idle-timeout enforcement |
+| 2 | `crates/octos-agent/src/agent/append_only_audit.rs` | 364 | Append-only context audit: does a turn's request history only ever GROW? |
+| 3 | `crates/octos-agent/src/agent/budget.rs` | 821 | Budget tracking and enforcement for the agent loop |
+| 4 | `crates/octos-agent/src/agent/compaction.rs` | 358 | Context window trimming and fallback truncation |
+| 5 | `crates/octos-agent/src/agent/detection.rs` | 858 | Detection of repetitive output and retriable responses |
+| 6 | `crates/octos-agent/src/agent/execution.rs` | 4,730 | Tool execution: dispatching tool calls with hooks and timeout handling |
+| 7 | `crates/octos-agent/src/agent/llm_call.rs` | 988 | LLM call orchestration with lifecycle hooks and retry logic |
+| 8 | `crates/octos-agent/src/agent/loop_compaction.rs` | 414 | Message preparation pipeline for long-turn loop calls |
+| 9 | `crates/octos-agent/src/agent/loop_runner.rs` | 3,979 | Main agent loop: process_message and run_task orchestration |
+| 10 | `crates/octos-agent/src/agent/loop_state.rs` | 768 | Typed retry-bucket state machine for the agent loop (M6.2, issue #489) |
+| 11 | `crates/octos-agent/src/agent/memory.rs` | 1,062 | Initial message building and episodic memory context for the agent |
+| 12 | `crates/octos-agent/src/agent/message_repair.rs` | 1,260 | Message normalization, ordering repair, and tool pair validation |
+| 13 | `crates/octos-agent/src/tools/mod.rs` | 1,644 | Agent implementation |
+| 14 | `crates/octos-agent/src/agent/prompt_segments.rs` | 233 | Ordered system-prompt segments |
+| 15 | `crates/octos-agent/src/agent/realtime.rs` | 602 | Real-time agent loop extensions for robotic operation |
+| 16 | `crates/octos-agent/src/agent/rich_output.rs` | 309 | Rich output: produce a self-contained HTML document from a short brief |
+| 17 | `crates/octos-agent/src/agent/streaming.rs` | 1,491 | Stream consumption, shutdown handling, and cost reporting |
+| 18 | `crates/octos-agent/src/agent/turn_failure.rs` | 69 | Voice-turn failure projection |
+| 19 | `crates/octos-agent/src/agent/turn_state.rs` | 388 | Typed turn state for loop execution |
+| 20 | `crates/octos-agent/src/agent/verifier.rs` | 881 | Optional inference-time verifier and compact structured turn ledger |
 
-按职责可以分三层。**主线九模块**承担一次 turn 的全部决策：`loop_runner.rs`（编排）、`turn_state.rs` / `loop_state.rs`（turn 内与跨 turn 的 typed 状态）、`budget.rs`（预算与检查点）、`llm_call.rs` / `streaming.rs`（调用与流消费）、`execution.rs`（工具派发）、`message_repair.rs`（消息修复）、`detection.rs`（退化检测）。**支线模块**各管一个侧面：`activity.rs`（空闲超时）、`append_only_audit.rs`（请求历史只增审计）、`memory.rs`（首轮消息与情节记忆）、`prompt_segments.rs`（系统提示分段）、`verifier.rs`（推理期校验）、`realtime.rs` / `rich_output.rs` / `turn_failure.rs`（实时、富输出、语音失败投影）。**压缩双模块**（`compaction.rs` 与 `loop_compaction.rs`）本章只交代入口，算法细节详见第 8 章。
+按职责可以分三层。**主线九模块**承担一次 turn 的全部决策：`crates/octos-agent/src/agent/loop_runner.rs`（编排）、`crates/octos-agent/src/agent/turn_state.rs` / `crates/octos-agent/src/agent/loop_state.rs`（turn 内与跨 turn 的 typed 状态）、`crates/octos-agent/src/agent/budget.rs`（预算与检查点）、`crates/octos-agent/src/agent/llm_call.rs` / `crates/octos-agent/src/agent/streaming.rs`（调用与流消费）、`crates/octos-agent/src/agent/execution.rs`（工具派发）、`crates/octos-agent/src/agent/message_repair.rs`（消息修复）、`crates/octos-agent/src/agent/detection.rs`（退化检测）。**支线模块**各管一个侧面：`crates/octos-agent/src/agent/activity.rs`（空闲超时）、`crates/octos-agent/src/agent/append_only_audit.rs`（请求历史只增审计）、`crates/octos-agent/src/agent/memory.rs`（首轮消息与情节记忆）、`crates/octos-agent/src/agent/prompt_segments.rs`（系统提示分段）、`crates/octos-agent/src/agent/verifier.rs`（推理期校验）、`crates/octos-agent/src/agent/realtime.rs` / `crates/octos-agent/src/agent/rich_output.rs` / `crates/octos-agent/src/agent/turn_failure.rs`（实时、富输出、语音失败投影）。**压缩双模块**（`crates/octos-agent/src/agent/compaction.rs` 与 `crates/octos-agent/src/agent/loop_compaction.rs`）本章只交代入口，算法细节详见第 8 章。
 
-`mod.rs` 是装配层：`pub struct Agent` 的构造与 builder 家族（`with_reporter`、`with_hooks`、`with_snapshot_manager`、`with_realtime`、`with_compaction_runner`、`with_persistent_retry_state` 等，`crates/octos-agent/src/agent/mod.rs:691` 起）把上述模块的运行时状态接进 Agent 结构体；超时与限额常量集中在 `AgentConfig`（first-token grace 180s、stream idle 90s、LLM call max 1200s，`crates/octos-agent/src/agent/mod.rs:148`）。
+`crates/octos-agent/src/tools/mod.rs` 是装配层：`pub struct Agent` 的构造与 builder 家族（`with_reporter`、`with_hooks`、`with_snapshot_manager`、`with_realtime`、`with_compaction_runner`、`with_persistent_retry_state` 等，`crates/octos-agent/src/agent/mod.rs:691` 起）把上述模块的运行时状态接进 Agent 结构体；超时与限额常量集中在 `AgentConfig`（first-token grace 180s、stream idle 90s、LLM call max 1200s，`crates/octos-agent/src/agent/mod.rs:148`）。
 
-一个容易被忽略的分层事实：这个目录对外的公开面很窄。`execution.rs` 的工具派发主入口 `execute_tools` 是 `pub(super)`（`crates/octos-agent/src/agent/execution.rs:2483`），`streaming.rs` 的流消费主入口 `consume_stream_with_input_estimate` 同样是 `pub(super)`（`crates/octos-agent/src/agent/streaming.rs:73`），`message_repair.rs` 只有 `normalize_tool_call_id` 一个全 crate 公开函数（`crates/octos-agent/src/agent/message_repair.rs:95`）。真正的全公开入口只有 `loop_runner.rs` 的 `process_message` / `run_task` 家族。换句话说，crate 边界上只暴露「循环」，不暴露循环的器官。这个可见性设计有一层工程动机：器官级函数的签名还在演化（`execute_tools` 的返回元组已经长到七个元素，每加一种派发产物就要动签名），若把它们开成 `pub`，外部调用方会立刻把签名焊死，此后每次演化都是破坏性变更。只公开两个入口家族，等于把「循环怎么编排」的稳定性承诺收缩到最小面，内部模块得以自由重构——事实上 `execution.rs` 比 `loop_runner.rs` 更大，却没有一行代码泄漏到 crate 外。
+一个容易被忽略的分层事实：这个目录对外的公开面很窄。`crates/octos-agent/src/agent/execution.rs` 的工具派发主入口 `execute_tools` 是 `pub(super)`（`crates/octos-agent/src/agent/execution.rs:2483`），`crates/octos-agent/src/agent/streaming.rs` 的流消费主入口 `consume_stream_with_input_estimate` 同样是 `pub(super)`（`crates/octos-agent/src/agent/streaming.rs:73`），`crates/octos-agent/src/agent/message_repair.rs` 只有 `normalize_tool_call_id` 一个全 crate 公开函数（`crates/octos-agent/src/agent/message_repair.rs:95`）。真正的全公开入口只有 `crates/octos-agent/src/agent/loop_runner.rs` 的 `process_message` / `run_task` 家族。换句话说，crate 边界上只暴露「循环」，不暴露循环的器官。这个可见性设计有一层工程动机：器官级函数的签名还在演化（`execute_tools` 的返回元组已经长到七个元素，每加一种派发产物就要动签名），若把它们开成 `pub`，外部调用方会立刻把签名焊死，此后每次演化都是破坏性变更。只公开两个入口家族，等于把「循环怎么编排」的稳定性承诺收缩到最小面，内部模块得以自由重构——事实上 `crates/octos-agent/src/agent/execution.rs` 比 `crates/octos-agent/src/agent/loop_runner.rs` 更大，却没有一行代码泄漏到 crate 外。
 
-主线九模块的拆分本身也值得追问：为什么是这九个，而不是按「调用 LLM 的代码」聚成一个文件？答案藏在变更轴上。`message_repair.rs` 修的是消息格式破损，变化频率跟随 Provider 协议差异（Anthropic 要求 tool result 紧跟 assistant、OpenAI 允许间隔）；`detection.rs` 检测的是模型行为退化，变化频率跟随模型生态（小模型的空响应、重复输出形态一直在出新）；`budget.rs` 是纯决策逻辑，几乎不变；`execution.rs` 跟随工具系统演化（详见第 6 章）；`streaming.rs` 跟随 SSE 解析与成本上报需求。五类变更轴互不相同，塞进一个文件意味着每次 Provider 协议调整都要在两千行混合代码里找上下文。按变更轴拆模块，让每个文件的 diff 都有单一主题。
+主线九模块的拆分本身也值得追问：为什么是这九个，而不是按「调用 LLM 的代码」聚成一个文件？答案藏在变更轴上。`crates/octos-agent/src/agent/message_repair.rs` 修的是消息格式破损，变化频率跟随 Provider 协议差异（Anthropic 要求 tool result 紧跟 assistant、OpenAI 允许间隔）；`crates/octos-agent/src/agent/detection.rs` 检测的是模型行为退化，变化频率跟随模型生态（小模型的空响应、重复输出形态一直在出新）；`crates/octos-agent/src/agent/budget.rs` 是纯决策逻辑，几乎不变；`crates/octos-agent/src/agent/execution.rs` 跟随工具系统演化（详见第 6 章）；`crates/octos-agent/src/agent/streaming.rs` 跟随 SSE 解析与成本上报需求。五类变更轴互不相同，塞进一个文件意味着每次 Provider 协议调整都要在两千行混合代码里找上下文。按变更轴拆模块，让每个文件的 diff 都有单一主题。
 
 ## 5.2 一次 turn 的生命周期
 
@@ -80,13 +80,13 @@ sequenceDiagram
     end
 ```
 
-①消息准备：`prepare_conversation_messages`（`crates/octos-agent/src/agent/loop_compaction.rs:27`）与任务侧镜像 `prepare_task_messages`（L71）把历史送进修复管线。`message_repair.rs` 的七个 `pub(crate)` 函数各修一类破损：`normalize_tool_call_ids`（L27，统一跨 Provider 的 tool_call_id 前缀与字符集）、`normalize_system_messages`（L108）、`repair_message_order`（L189）、`repair_tool_pairs`（L325）、`synthesize_missing_tool_results`（L414）、`truncate_old_tool_results`（L513）。每类修复记入 `LoopRepairReason` 的七个变体（`crates/octos-agent/src/agent/turn_state.rs:48`，从 `ContextTrimmed` 到 `ToolCallIdsNormalized`），让「这次 turn 动过什么」可观测。
+①消息准备：`prepare_conversation_messages`（`crates/octos-agent/src/agent/loop_compaction.rs:27`）与任务侧镜像 `prepare_task_messages`（L71）把历史送进修复管线。`crates/octos-agent/src/agent/message_repair.rs` 的七个 `pub(crate)` 函数各修一类破损：`normalize_tool_call_ids`（L27，统一跨 Provider 的 tool_call_id 前缀与字符集）、`normalize_system_messages`（L108）、`repair_message_order`（L189）、`repair_tool_pairs`（L325）、`synthesize_missing_tool_results`（L414）、`truncate_old_tool_results`（L513）。每类修复记入 `LoopRepairReason` 的七个变体（`crates/octos-agent/src/agent/turn_state.rs:48`，从 `ContextTrimmed` 到 `ToolCallIdsNormalized`），让「这次 turn 动过什么」可观测。
 
 ②预算检查：每次迭代开头跑 `check_budget`（见 5.3 节）。
 
-③LLM 调用：整个调用编排收敛在 `llm_call.rs` 的单一主函数 `call_llm_with_hooks`（`crates/octos-agent/src/agent/llm_call.rs:22`），模块其余部分几乎全是测试 mock。它返回的三元组里，`usage` 把被丢弃的重试尝试合并进最终尝试，`attributed_cost_usd` 则按实际消耗 token 的 provider 分别计价，调用方必须直接记账而不是用胜出者费率重算合并总量（这是 #1632 P2 钉住的契约）。把调用编排压成单一函数是个自觉的选择：调用前后的 hook、跨 provider 的重试梯、成本归因三者必须严格咬合，任何一处插入新逻辑都可能破坏「重试尝试的 token 不丢账」这条不变量。单一入口让所有调用路径共享同一份编排逻辑，测试 mock 也只需模拟一个函数的形态。若每个调用点自行编排 hook 与重试，第一处遗漏就会造成成本统计黑洞。
+③LLM 调用：整个调用编排收敛在 `crates/octos-agent/src/agent/llm_call.rs` 的单一主函数 `call_llm_with_hooks`（`crates/octos-agent/src/agent/llm_call.rs:22`），模块其余部分几乎全是测试 mock。它返回的三元组里，`usage` 把被丢弃的重试尝试合并进最终尝试，`attributed_cost_usd` 则按实际消耗 token 的 provider 分别计价，调用方必须直接记账而不是用胜出者费率重算合并总量（这是 #1632 P2 钉住的契约）。把调用编排压成单一函数是个自觉的选择：调用前后的 hook、跨 provider 的重试梯、成本归因三者必须严格咬合，任何一处插入新逻辑都可能破坏「重试尝试的 token 不丢账」这条不变量。单一入口让所有调用路径共享同一份编排逻辑，测试 mock 也只需模拟一个函数的形态。若每个调用点自行编排 hook 与重试，第一处遗漏就会造成成本统计黑洞。
 
-④流消费：`consume_stream_with_input_estimate`（`crates/octos-agent/src/agent/streaming.rs:73`）消费 SSE 流，处理 shutdown 信号（`wait_for_shutdown`，L64），结束后由 `response_usage_cost`（L555）与 `emit_cost_update`（L581）上报成本，`response_to_message`（L669）把原始响应转成消息。流消费独立成模块的动机是它管着两类别的模块都不该管的资源：SSE 连接的生命周期（首 token 超时、token 间隔超时、中断检测）与输入 token 的估计。流式响应在结束前拿不到完整的 usage 块，而成本上报又不能等流结束，于是需要一个「边消费边估」的组件。把这段逻辑留在调用方意味着每个 provider 的重试路径都要重复实现一次中断检测；集中在 streaming.rs，中断语义全 crate 只有一份。
+④流消费：`consume_stream_with_input_estimate`（`crates/octos-agent/src/agent/streaming.rs:73`）消费 SSE 流，处理 shutdown 信号（`wait_for_shutdown`，L64），结束后由 `response_usage_cost`（L555）与 `emit_cost_update`（L581）上报成本，`response_to_message`（L669）把原始响应转成消息。流消费独立成模块的动机是它管着两类别的模块都不该管的资源：SSE 连接的生命周期（首 token 超时、token 间隔超时、中断检测）与输入 token 的估计。流式响应在结束前拿不到完整的 usage 块，而成本上报又不能等流结束，于是需要一个「边消费边估」的组件。把这段逻辑留在调用方意味着每个 provider 的重试路径都要重复实现一次中断检测；集中在 crates/octos-agent/src/agent/streaming.rs，中断语义全 crate 只有一份。
 
 ⑤工具派发：`execute_tools`（`crates/octos-agent/src/agent/execution.rs:2483`）决定串行还是并行、计算批超时（`compute_batch_timeout_secs`，L209）、执行前后 hook、识别长时工具（`is_long_running_tool`，L174）、处理 spawn_only 产物文件。工具语义本身详见第 6 章。这个 4,730 行的最大模块之所以最大，是因为它独自承担了「把 LLM 的意图变成副作用」的全部工程问题：批量调度（串行、并行、混合三路，`run_serial_calls` L2738 与 `execute_mixed_batch` L2846）、超时预算（批内最长工具决定整批时限）、取消与 panic 的结果投影（`cancelled_result` L3003、`timed_out_result` L3035、`panic_result` L3062，三种异常都要变成 LLM 能读的工具结果消息而不是让循环崩掉）、快照（`snapshot_before_mutating_tools` L2457，变更类工具执行前留底）。若这些职责留在 loop_runner，主循环文件会突破八千行且每条路径都混着工具细节；拆出来后 loop_runner 只看到「一批工具调用进、一批结果消息出」的干净接口。
 
@@ -118,7 +118,7 @@ pub(super) fn check_budget(
     }
 ```
 
-（摘自 `crates/octos-agent/src/agent/budget.rs:100`，续后依次为 idle progress timeout、activity timeout、token 预算三道闸。）顺序本身就是设计：shutdown 是一次原子加载，用户中断必须最先响应；迭代数是最常见的停止原因，一次整数比较次之；两种超时依赖 `activity.rs` 的活动跟踪（`LoopActivityState`，`crates/octos-agent/src/agent/activity.rs:16`）；token 预算最后，因为 `budget_tokens_used`（`crates/octos-agent/src/agent/budget.rs:90`）要做四次饱和加法，且很多部署根本不设上限。token 统计把 cache_read 与 cache_write 一并计入：只加 input+output 会让开了 prompt caching 的 Anthropic 循环把预算跑穿约十倍。
+（摘自 `crates/octos-agent/src/agent/budget.rs:100`，续后依次为 idle progress timeout、activity timeout、token 预算三道闸。）顺序本身就是设计：shutdown 是一次原子加载，用户中断必须最先响应；迭代数是最常见的停止原因，一次整数比较次之；两种超时依赖 `crates/octos-agent/src/agent/activity.rs` 的活动跟踪（`LoopActivityState`，`crates/octos-agent/src/agent/activity.rs:16`）；token 预算最后，因为 `budget_tokens_used`（`crates/octos-agent/src/agent/budget.rs:90`）要做四次饱和加法，且很多部署根本不设上限。token 统计把 cache_read 与 cache_write 一并计入：只加 input+output 会让开了 prompt caching 的 Anthropic 循环把预算跑穿约十倍。
 
 `BudgetStop`（`crates/octos-agent/src/agent/budget.rs:13`）五个变体各携带对用户有意义的上下文：`MaxIterations { limit }` 带上限值，`MaxTokens { used, limit }` 带双方数字，两种 timeout 带 limit。`BudgetStop::message()`（L41）负责把这些变体渲染成可操作的终止消息；`report_budget_stop`（L141）再把它变成 `ProgressEvent` 上报。
 
@@ -130,7 +130,7 @@ pub(super) fn check_budget(
 
 ### 5.3.3 #27e：落盘检查点
 
-预算真正耗尽时的最大风险是丢工作树。#27e 在 `budget.rs` 的非测试段落（L484 起）实现落盘检查点，主函数 `checkpoint_budget_exhaustion`（`crates/octos-agent/src/agent/budget.rs:546`）：
+预算真正耗尽时的最大风险是丢工作树。#27e 在 `crates/octos-agent/src/agent/budget.rs` 的非测试段落（L484 起）实现落盘检查点，主函数 `checkpoint_budget_exhaustion`（`crates/octos-agent/src/agent/budget.rs:546`）：
 
 ```rust
 pub(super) fn checkpoint_budget_exhaustion(
@@ -155,7 +155,7 @@ pub(super) fn checkpoint_budget_exhaustion(
 
 调用点在任务循环的预算终止分支（`crates/octos-agent/src/agent/loop_runner.rs:2328`）：Grace 未获准时，先 `record_budget_stop` 与 `report_budget_stop`，再取 `workspace_root` 交给检查点函数，marker 存在时与 `stop.message()` 一起拼进 TaskResult。
 
-落盘侧的调用链同样一条线：`git_in`（L484）是最底层的命令执行原语，dirty 判断与 commit 都走它；`write_result_md_named`（L499）是唯一的落盘写法（tmp 加 rename，tmp 名含 `.tmp-27e` 后缀，L501），并发读者永远看不到半个文件；`result_md_owned_by_peer`（L532）与 `result_md_owner_content_is_peer`（L542）构成写权判定的两层，前者负责读 sidecar、后者负责判断内容，公开的只有后者，cli 侧 #1824 的 fd 锚定安全读路径把读到的内容喂给同一个判断函数，两个消费者共享一份语义；`checkpoint_budget_exhaustion`（L546）在最上层编排：先做 MaxIterations 合取短路，再判 git 仓库、判 dirty，然后依写权选文件名、原子写 staged result、add -A、本地提交、返回 marker。五个函数一条依赖链，每个环节独立可测（原子写在 L626 起的 `budget_checkpoint_tests` 有独立测试模块），这正是不把整段逻辑内联进 loop_runner 的原因：检查点逻辑的测试需要真实的 git 仓库环境，放在 budget.rs 里可以独立构造临时仓库跑，而不用模拟整个 Agent。
+落盘侧的调用链同样一条线：`git_in`（L484）是最底层的命令执行原语，dirty 判断与 commit 都走它；`write_result_md_named`（L499）是唯一的落盘写法（tmp 加 rename，tmp 名含 `.tmp-27e` 后缀，L501），并发读者永远看不到半个文件；`result_md_owned_by_peer`（L532）与 `result_md_owner_content_is_peer`（L542）构成写权判定的两层，前者负责读 sidecar、后者负责判断内容，公开的只有后者，cli 侧 #1824 的 fd 锚定安全读路径把读到的内容喂给同一个判断函数，两个消费者共享一份语义；`checkpoint_budget_exhaustion`（L546）在最上层编排：先做 MaxIterations 合取短路，再判 git 仓库、判 dirty，然后依写权选文件名、原子写 staged result、add -A、本地提交、返回 marker。五个函数一条依赖链，每个环节独立可测（原子写在 L626 起的 `budget_checkpoint_tests` 有独立测试模块），这正是不把整段逻辑内联进 loop_runner 的原因：检查点逻辑的测试需要真实的 git 仓库环境，放在 crates/octos-agent/src/agent/budget.rs 里可以独立构造临时仓库跑，而不用模拟整个 Agent。
 
 ## 5.4 stop_reason 决策树
 
@@ -183,7 +183,7 @@ flowchart TD
 
 ## 5.5 LoopDecision：typed retry-bucket 状态机
 
-错误恢复的心脏在 `loop_state.rs`：`LoopRetryState`（`crates/octos-agent/src/agent/loop_state.rs:217`）持有 16 个错误桶各自的计数器（`LoopRetryCounters`，L186）与上限（`LoopRetryLimits`，L81）。上限刻意压低：结构性故障的桶几乎不给重试机会（authentication 1、quota 1、content_filtered 1、internal 1），瞬态故障给几次（rate_limited 5、network 4、provider_unavailable 4、timeout 3），`shell_spiral` 只有 1。
+错误恢复的心脏在 `crates/octos-agent/src/agent/loop_state.rs`：`LoopRetryState`（`crates/octos-agent/src/agent/loop_state.rs:217`）持有 16 个错误桶各自的计数器（`LoopRetryCounters`，L186）与上限（`LoopRetryLimits`，L81）。上限刻意压低：结构性故障的桶几乎不给重试机会（authentication 1、quota 1、content_filtered 1、internal 1），瞬态故障给几次（rate_limited 5、network 4、provider_unavailable 4、timeout 3），`shell_spiral` 只有 1。
 
 对循环的裁决是 `LoopDecision`（`crates/octos-agent/src/agent/loop_state.rs:131`）六个变体，每个变体的裁决语义都值得单独说清。`Continue`（L134）的含义是「失败预期会自愈」：限流突发、网络抖动、慢工具，重试时上下文原样保留，因为问题不在请求内容；`RotateAndRetry`（L138）是「当前 lane 病了但任务没病」：5xx、流中断、配额烧穿都属于 provider 级故障，换一条 credential lane 大概率就好，改写上下文反而浪费；`CompactAndRetry`（L141）是唯一的「改写上下文」裁决，且只服务 `ContextOverflow`：请求超窗时裸重试必然再失败，压缩是唯一出路，这个变体的存在把「哪类错误需要动上下文」从调用方判断收进类型系统；`Escalate`（L145）是不可重试类的归宿：auth、invalid request、content filter、工具或插件故障、内部 bug，继续循环只会烧钱，上抛给操作者才是正确动作；`Exhausted`（L149）不对应任何错误类别，它对应的是「同一桶的计数超过了上限」，这是 #489 不变量 2 的类型化表达：无限循环在这里被强制终结；`Grace`（L153）是最特殊的一个，它不是错误裁决而是预算裁决的延伸，硬预算耗尽后若循环至少做过一次生产性工具调用，多给一轮收尾。核心判定只有八行：
 
@@ -236,7 +236,7 @@ stateDiagram-v2
 
 两处映射值得细看。`ProviderUnavailable` 映射到 `SwitchProvider`（`crates/octos-agent/src/harness_errors.rs:249`）：5xx、流中断、模型不可用都归此变体，agent 内部没有额外的 provider lane hook，实际换 lane 由 loop 侧 `RotateAndRetry` 裁决驱动 ProviderChain 前进。`Quota` 也映射到 `SwitchProvider`（L267，#27b）：配额烧穿是 provider 级降级而非致命错误，链上的 fallback lane 可能还健康；而真正的 401 `Authentication` 保持 FailFast，因为错误密钥在每条 lane 上都会失败。这条红线有测试钉住。
 
-进入这条链的入口在 `loop_runner.rs`：`classify_loop_error`（`crates/octos-agent/src/agent/loop_runner.rs:313`）把 `eyre::Report` 经 `HarnessError::classify_report` 归类、记指标、写事件；`dispatch_loop_error`（L437）把归类结果喂给 `LoopRetryState::observe` 并再写一条 retry 事件；调用侧拿到的只是二选一的粗粒度动作 `LoopErrorAction`（L249，`Retry` 或 `Bail`），`CompactAndRetry` 在带内完成，调用方无须穿透压缩状态。
+进入这条链的入口在 `crates/octos-agent/src/agent/loop_runner.rs`：`classify_loop_error`（`crates/octos-agent/src/agent/loop_runner.rs:313`）把 `eyre::Report` 经 `HarnessError::classify_report` 归类、记指标、写事件；`dispatch_loop_error`（L437）把归类结果喂给 `LoopRetryState::observe` 并再写一条 retry 事件；调用侧拿到的只是二选一的粗粒度动作 `LoopErrorAction`（L249，`Retry` 或 `Bail`），`CompactAndRetry` 在带内完成，调用方无须穿透压缩状态。
 
 ## 5.7 循环自愈：两个退化实例
 
@@ -264,11 +264,11 @@ if content_empty
 
 ## 5.8 退化检测
 
-`detection.rs` 是循环的免疫层，五个 `pub(super)` 函数：`is_retriable_response`（`crates/octos-agent/src/agent/detection.rs:60`，空响应等可在调用层重试的形态）、`normalize_inline_invokes`（L84）、`is_repetitive_output`（L111，重复文本检测）、`is_retryable_stream_error`（L146）、`is_truncated_tool_call_error`（L168）。加上工具序列层面的 `LoopDetector`（窗口 12，任务循环注释明确对齐对话循环窗口）与 `loop_state.rs` 的 `SHELL_SPIRAL_VARIANT`（L180，shell 螺旋计数由状态机持有），构成三层：响应层、序列层、桶层。检测命中后的动作都已类型化：响应层回到调用重试梯，序列层停住本轮工具执行并上抛最近输出，桶层走 5.5 节的裁决。
+`crates/octos-agent/src/agent/detection.rs` 是循环的免疫层，五个 `pub(super)` 函数：`is_retriable_response`（`crates/octos-agent/src/agent/detection.rs:60`，空响应等可在调用层重试的形态）、`normalize_inline_invokes`（L84）、`is_repetitive_output`（L111，重复文本检测）、`is_retryable_stream_error`（L146）、`is_truncated_tool_call_error`（L168）。加上工具序列层面的 `LoopDetector`（窗口 12，任务循环注释明确对齐对话循环窗口）与 `crates/octos-agent/src/agent/loop_state.rs` 的 `SHELL_SPIRAL_VARIANT`（L180，shell 螺旋计数由状态机持有），构成三层：响应层、序列层、桶层。检测命中后的动作都已类型化：响应层回到调用重试梯，序列层停住本轮工具执行并上抛最近输出，桶层走 5.5 节的裁决。
 
 ## 5.9 支线模块一览
 
-四个支线模块各用一段交代。`memory.rs` 负责首轮消息构建与情节记忆召回：`build_initial_messages`（`crates/octos-agent/src/agent/memory.rs:249`）、`recall_relevant_episodes`（L86）、`save_conversation_episode`（L174），相似度阈值 `MIN_EPISODE_SIMILARITY = 0.55`（L44）；检索机制详见第 4 章。`prompt_segments.rs` 用 `PromptSegmentProvider` trait（`crates/octos-agent/src/agent/prompt_segments.rs:25`）维护有序系统提示段，支持具名替换与热刷新。`verifier.rs` 是可选的推理期校验器加紧凑 turn ledger：`TurnLedger`（L168）逐工具批记录条目，`should_verify_after_tool_batch`（L212）决定是否触发校验，`ready_gate_active`（L243）实现「校验通过才许终止」的门。`append_only_audit.rs` 回答一个问题：一次 turn 的请求历史是否只增不减（`Rewrite` 枚举，L162），默认关闭，`OCTOS_APPEND_ONLY_AUDIT=1` 才开启且绝不改写请求。`realtime.rs`（心跳与传感器注入，`Heartbeat` L128、`SensorContextInjector` L238）、`rich_output.rs`（从短 brief 生成自包含 HTML，`author_html` L85）、`turn_failure.rs`（语音 turn 失败投影，`TurnFailure` L9）服务特定运行模式，详见第 14 章。
+四个支线模块各用一段交代。`crates/octos-agent/src/agent/memory.rs` 负责首轮消息构建与情节记忆召回：`build_initial_messages`（`crates/octos-agent/src/agent/memory.rs:249`）、`recall_relevant_episodes`（L86）、`save_conversation_episode`（L174），相似度阈值 `MIN_EPISODE_SIMILARITY = 0.55`（L44）；检索机制详见第 4 章。`crates/octos-agent/src/agent/prompt_segments.rs` 用 `PromptSegmentProvider` trait（`crates/octos-agent/src/agent/prompt_segments.rs:25`）维护有序系统提示段，支持具名替换与热刷新。`crates/octos-agent/src/agent/verifier.rs` 是可选的推理期校验器加紧凑 turn ledger：`TurnLedger`（L168）逐工具批记录条目，`should_verify_after_tool_batch`（L212）决定是否触发校验，`ready_gate_active`（L243）实现「校验通过才许终止」的门。`crates/octos-agent/src/agent/append_only_audit.rs` 回答一个问题：一次 turn 的请求历史是否只增不减（`Rewrite` 枚举，L162），默认关闭，`OCTOS_APPEND_ONLY_AUDIT=1` 才开启且绝不改写请求。`crates/octos-agent/src/agent/realtime.rs`（心跳与传感器注入，`Heartbeat` L128、`SensorContextInjector` L238）、`crates/octos-agent/src/agent/rich_output.rs`（从短 brief 生成自包含 HTML，`author_html` L85）、`crates/octos-agent/src/agent/turn_failure.rs`（语音 turn 失败投影，`TurnFailure` L9）服务特定运行模式，详见第 14 章。
 
 ## 5.10 续跑边界：goal 层的 master_continuation_scheduler
 
@@ -278,7 +278,7 @@ if content_empty
 
 ## 5.11 本章回顾
 
-1. 模块地图：`agent/` 20 模块 21,369 行，三层分工（主线九模块、支线模块、压缩双模块），公开面只有 `loop_runner.rs` 的 `process_message` / `run_task` 家族，器官级入口全部 `pub(crate)` / `pub(super)`。
+1. 模块地图：`agent/` 20 模块 21,369 行，三层分工（主线九模块、支线模块、压缩双模块），公开面只有 `crates/octos-agent/src/agent/loop_runner.rs` 的 `process_message` / `run_task` 家族，器官级入口全部 `pub(crate)` / `pub(super)`。
 2. 生命周期：消息准备（修复七函数）、预算检查（五道闸）、LLM 调用（单一主函数）、流消费、工具派发、状态更新六阶段，主循环文件编排而不实现。
 3. 预算与检查点：`check_budget` 顺序即设计；Grace 给硬停前一次宽限；#27e 在 MaxIterations 且 git 且 dirty 三条件合取时本地提交 WIP、原子写 staged result（peer 持有写权时写 `result.checkpoint.md`）、永不 push、fail-open。
 4. 错误恢复：`HarnessError`（十五变体）→ `RecoveryHint`（五变体）→ `LoopDecision`（六变体）三层链路，16 桶独立上限，`ProviderUnavailable` 与 `Quota` 换 lane、`Authentication` 保持 FailFast。
@@ -291,7 +291,7 @@ if content_empty
 
 - `assets/ch05-facts.md`：本章全部行号与数字的事实表，附生成命令，可逐条复现。
 - 第 3 章的三层容错链（RetryProvider / ProviderChain / AdaptiveRouter）：`RotateAndRetry` 裁决落地后实际换 lane 的机制。
-- 第 8 章：`compaction.rs` / `loop_compaction.rs` 背后的分层压缩算法。
+- 第 8 章：`crates/octos-agent/src/agent/compaction.rs` / `crates/octos-agent/src/agent/loop_compaction.rs` 背后的分层压缩算法。
 - 第 18 章：`MasterContinuationScheduler` 的消费侧与 goal 续跑全貌。
 - issue #489（M6.2 typed retry bucket）与 #2172 / #2174 的提交说明：本章状态机与两个自愈实例的第一手动机。
 
@@ -307,4 +307,4 @@ if content_empty
 
 ## 版本演化说明
 
-> 本章分析基于 octos main @ `9c157101`（`9c1571016e5ea86955b4b3486c04f0359dfff339`，2026-09-02 19:37 +0800 统计）。所有行号与规模数字（20 模块、21,369 行、`execution.rs` 4,730 行、`loop_runner.rs` 3,979 行等）的口径与复现命令见 `assets/ch05-facts.md`。相对 v1 旧稿，本章整章重写：按 20 模块地图重组叙事，取代旧稿「单文件逐段走读」骨架；预算检查点（#27e）、Grace 宽限、typed retry-bucket 状态机（M6.2 #489）、循环自愈两实例（#2172 / #2174）与 goal 层续跑边界为新增内容；旧稿引用的 `loop_detect` 等行号如与新版源码不符，以事实表为准。
+> 本章分析基于 octos main @ `9c157101`（`9c1571016e5ea86955b4b3486c04f0359dfff339`，2026-09-02 19:37 +0800 统计）。所有行号与规模数字（20 模块、21,369 行、`crates/octos-agent/src/agent/execution.rs` 4,730 行、`crates/octos-agent/src/agent/loop_runner.rs` 3,979 行等）的口径与复现命令见 `assets/ch05-facts.md`。相对 v1 旧稿，本章整章重写：按 20 模块地图重组叙事，取代旧稿「单文件逐段走读」骨架；预算检查点（#27e）、Grace 宽限、typed retry-bucket 状态机（M6.2 #489）、循环自愈两实例（#2172 / #2174）与 goal 层续跑边界为新增内容；旧稿引用的 `loop_detect` 等行号如与新版源码不符，以事实表为准。

@@ -63,7 +63,7 @@ profile 文件位于 `~/.octos/profiles/<id>.json`（`crates/octos-cli/src/profi
 
 | 字段路径 | 类型 | 默认值 | 作用 | 来源行号 |
 |---------|------|--------|------|---------|
-| `gateway.channels[]` | array<ChannelEntry> | `[{"type":"cli",…}]` | 启用的频道列表 | `crates/octos-cli/src/config.rs:1527` |
+| `gateway.channels[]` | `array` < ChannelEntry > | `[{"type":"cli",…}]` | 启用的频道列表 | `crates/octos-cli/src/config.rs:1527` |
 | `gateway.channels[].type` | string | 必填 | 频道类型：`"cli"` / `"telegram"` / `"discord"` | `crates/octos-cli/src/config.rs:1642` |
 | `gateway.channels[].allowed_senders` | string[] | `[]`（= 允许所有人） | 允许的发送者 ID | `crates/octos-cli/src/config.rs:1646` |
 | `gateway.channels[].settings` | json | `{}` | 频道特定设置 | `crates/octos-cli/src/config.rs:1650` |
@@ -336,7 +336,7 @@ profile 文件位于 `~/.octos/profiles/<id>.json`（`crates/octos-cli/src/profi
 
 ## C.10 `sub_providers[]` 专节（`crates/octos-cli/src/config.rs:618` `SubProviderConfig`）
 
-spawn 子 agent 可引用的模型车道。保留键：`goal_verifier`（#1935）——存在时该 lane 成为独立的 goal 完成校验模型，否则回退到旧行为（用评分会话自己的 provider 校验）。与 Ch9 的分工：那边讲 spawn 工具如何消费这些车道，这里只给字段。
+spawn 子 agent 可引用的模型车道。保留键：`goal_verifier`（#1935）：存在时该 lane 成为独立的 goal 完成校验模型，否则回退到旧行为（用评分会话自己的 provider 校验）。与 Ch9 的分工：那边讲 spawn 工具如何消费这些车道，这里只给字段。
 
 | 字段路径 | 类型 | 默认值 | 作用 | 来源行号 |
 |---------|------|--------|------|---------|
@@ -359,7 +359,7 @@ spawn 子 agent 可引用的模型车道。保留键：`goal_verifier`（#1935�
 | `validation.on_turn_end` | string[] | `[]` | Tier 1：每轮末跑的廉价检查（<100ms） | `crates/octos-agent/src/workspace_policy.rs:118` |
 | `validation.on_source_change` | string[] | `[]` | Tier 2：源码变更时跑的中档检查（1-5s） | `crates/octos-agent/src/workspace_policy.rs:121` |
 | `validation.on_completion` | string[] | `[]` | Tier 3：完成/发布才跑的昂贵检查（10-30s） | `crates/octos-agent/src/workspace_policy.rs:124` |
-| `validation.validators[]` | array<Validator> | `[]` | 类型化声明式校验器（M4.3） | `crates/octos-agent/src/workspace_policy.rs:127` |
+| `validation.validators[]` | `array` < Validator > | `[]` | 类型化声明式校验器（M4.3） | `crates/octos-agent/src/workspace_policy.rs:127` |
 
 每个 `Validator`（`crates/octos-agent/src/workspace_policy.rs:143`）：
 
@@ -374,12 +374,12 @@ spawn 子 agent 可引用的模型车道。保留键：`goal_verifier`（#1935�
 
 `spec` 变体（`crates/octos-agent/src/workspace_policy.rs:301` `ValidatorSpec`，serde tag `kind`，snake_case）：
 
-- `command`：`cmd`（必填）、`args`（默认 `[]`）——子进程命令，走 shell 安全层（`crates/octos-agent/src/workspace_policy.rs:306`）
-- `tool_call`：`tool`（必填）、`args`（默认 `{}`）——调用注册的 agent 工具（`crates/octos-agent/src/workspace_policy.rs:313`）
-- `file_exists`：`path`（必填）、`min_bytes`（默认 `null`）——断言文件存在/最小字节数（`crates/octos-agent/src/workspace_policy.rs:318`）
-- `http_probe`：`url_template`（必填）、`expected_status`（默认 `200`）、`expected_contains`（默认 `null`）——HTTP 探测，默认 5s 超时（`crates/octos-agent/src/workspace_policy.rs:325`）
-- `ominix_voice_exists`：`name_arg`（必填）——查 ominix-api 已注册自定义音色（`crates/octos-agent/src/workspace_policy.rs:336`）
-- `audio_non_silent`：`glob`（默认 `""`）、`min_ratio`（默认 `0.3`）、`source`（默认 glob 模式）、`extension`（默认 `null`）——音频非静音比例（`crates/octos-agent/src/workspace_policy.rs:344`）
+- `command`：`cmd`（必填）、`args`（默认 `[]`）：子进程命令，走 shell 安全层（`crates/octos-agent/src/workspace_policy.rs:306`）
+- `tool_call`：`tool`（必填）、`args`（默认 `{}`）：调用注册的 agent 工具（`crates/octos-agent/src/workspace_policy.rs:313`）
+- `file_exists`：`path`（必填）、`min_bytes`（默认 `null`）：断言文件存在/最小字节数（`crates/octos-agent/src/workspace_policy.rs:318`）
+- `http_probe`：`url_template`（必填）、`expected_status`（默认 `200`）、`expected_contains`（默认 `null`）：HTTP 探测，默认 5s 超时（`crates/octos-agent/src/workspace_policy.rs:325`）
+- `ominix_voice_exists`：`name_arg`（必填）：查 ominix-api 已注册自定义音色（`crates/octos-agent/src/workspace_policy.rs:336`）
+- `audio_non_silent`：`glob`（默认 `""`）、`min_ratio`（默认 `0.3`）、`source`（默认 glob 模式）、`extension`（默认 `null`）：音频非静音比例（`crates/octos-agent/src/workspace_policy.rs:344`）
 - `per_file_non_silent`：整文件逐一非静音校验，`require_at_least` 计数（`crates/octos-agent/src/workspace_policy.rs:368` 附近）
 - 魔数断言 `MagicByteKind`：`mp3`/`wav`/`png`/`jpeg`/`pdf`/`mp4`/`webm`/`pptx`（`crates/octos-agent/src/workspace_policy.rs:469`）
 
@@ -387,7 +387,7 @@ spawn 子 agent 可引用的模型车道。保留键：`goal_verifier`（#1935�
 
 ## C.12 profile 体系简表
 
-profile 文件 `~/.octos/profiles/<id>.json` 的 `config.llm` 是一等结构化 LLM 选择契约——**不是**顶层 `config.json` 那种 `provider`/`model` 扁平键。三层结构：
+profile 文件 `~/.octos/profiles/<id>.json` 的 `config.llm` 是一等结构化 LLM 选择契约，**不是**顶层 `config.json` 那种 `provider`/`model` 扁平键。三层结构：
 
 **`config.llm`（`crates/octos-cli/src/profiles.rs:814` `LlmProfileConfig`）**
 

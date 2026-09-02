@@ -102,7 +102,7 @@ sequenceDiagram
     end
 ```
 
-**图 17-2：一次 dispatch 的时序。** 每一步都能在 `crates/octos-swarm/src/dispatcher.rs` 与 `crates/octos-swarm/src/persistence.rs` 的具名方法里找到，并与 `crates/octos-swarm/tests/swarm_dispatch.rs` 的用例对应：入口幂等对应 `should_survive_process_restart_mid_dispatch`（:560），并发拒绝对应 `should_reject_concurrent_dispatch_with_same_id`（:1100），逐字重放对应 `should_replay_finalized_result_verbatim_including_validator_verdicts`（:821）。
+图 17-2：一次 dispatch 的时序。 每一步都能在 `crates/octos-swarm/src/dispatcher.rs` 与 `crates/octos-swarm/src/persistence.rs` 的具名方法里找到，并与 `crates/octos-swarm/tests/swarm_dispatch.rs` 的用例对应：入口幂等对应 `should_survive_process_restart_mid_dispatch`（:560），并发拒绝对应 `should_reject_concurrent_dispatch_with_same_id`（:1100），逐字重放对应 `should_replay_finalized_result_verbatim_including_validator_verdicts`（:821）。
 
 每轮结束都把整份记录写回 redb，而不是攒到最后一次性写。代价是每轮一次序列化提交；收益是崩溃点任意移动，恢复都从最近的轮快照续跑。事件在 finalize 之后发出：`HarnessSwarmDispatchEvent` 带 `SWARM_DISPATCH_SCHEMA_VERSION`（固定为 1），失败结果的事件会把第一个未完成子任务的错误顶到 message 字段，supervisor 不必翻完整记录就能拿到可行动的线索。事件 ABI 与 schema 版本化的机制详见第 10 章。
 
@@ -160,7 +160,7 @@ flowchart TD
     G3 -->|verdicts| FIN["写进 SwarmResult，随事件外发"]
 ```
 
-**图 17-3：门禁三道决策流。** 第一道管派发资格，第二道管单个产物，第三道管合并产物；拒绝标签（`policy_denied`、`approval_unavailable`、`sandbox_required` 等）稳定进入事件与指标。
+图 17-3：门禁三道决策流。 第一道管派发资格，第二道管单个产物，第三道管合并产物；拒绝标签（`policy_denied`、`approval_unavailable`、`sandbox_required` 等）稳定进入事件与指标。
 
 第二道门在产物回收处。`gate_subtask_validators`（`crates/octos-swarm/src/dispatcher.rs:593`）只对状态为 `Completed` 的子任务跑 completion 相位的校验器；required 校验器失败会把 `Completed` 降级为 `TerminalFailed` 并把原因写进 `error`。已经失败的子任务不再受罚，不双重惩罚。Pipeline 对这道门最敏感：一个没过校验的上游产物会污染每个下游 stage 的 `pipeline_input`。测试 `should_run_completion_validators_in_swarm_subtask`（`crates/octos-swarm/tests/subtask_contracts.rs:123`）用一个要求 `required.txt` 存在的校验器面对空工作区，断言全部子任务被降级。
 

@@ -103,10 +103,10 @@ sequenceDiagram
 
 1. **Stage**。`stage_peer`(`crates/octos-cli/src/peers/mod.rs:1563`)在 `peers/<slug>/` 下按固定顺序落盘:worktree(`:1598`)、originator(`:1702`)、goal(`:1729`)、brief.md(`:1738`)、name(`:1752`)。顺序本身就是发布不变量,18.6 展开。模型侧的入口是 `peer_handoff` 工具(`crates/octos-agent/src/tools/peer_handoff.rs:133`),它只做参数校验(brief 上限、name 上限 64 字符、重复名直接拒绝而不自动加后缀),staging 落盘由 host 回调执行。
 2. **Staged 通知**。server 只负责 stage,session 由 client 打开(session 与 client 连接耦合)。`peer/staged` 通知的意思是已落盘、请 client 打开,client 收到后在后台打开 `peer-<slug>` 会话。这层职责切分是刻意的:server 不知道 client 的窗口管理,client 不知道 staging 的文件协议。
-3. **Client 打开**。peer 会话在自己的 topic 下建立,session key 以 `peer-<slug>` 前缀标识,这个前缀后来被 depth-1 治理复用。
+3. Client 打开。peer 会话在自己的 topic 下建立,session key 以 `peer-<slug>` 前缀标识,这个前缀后来被 depth-1 治理复用。
 4. **Boot 读回**。`crates/octos-cli/src/peers/host.rs:96` 的 `read_peer_boot` 从黑板读回执行上下文:`:99-116` 解析 goal 文件(第一行 goal_id,第二行 task_id,goal_id 为空则把孤立的 task_id 丢弃,不给 agent 塞一条悬空子任务),originator 只在 boot 读一次,防止运行中被重绑定;brief 按 1 MiB 上限读取。每个字段独立可选:没有 goal 或没有 brief 的 peer 是降级而非致命,只有 slug 不是真实 staged 目录才返回空。
 5. **运行**。peer 有完整的 turn 循环与工具集。终局产物由 `crates/octos-cli/src/api/ui_protocol_transport.rs:14279` 的 `write_peer_result_if_peer_session` 写回黑板:frontmatter 四字段(slug/outcome/updated_unix/turn,`:14334`),turn 号由已有的 `result-<n>.md` 计数加一推出(`:14328-14329`),正文上限 256 KiB(`:14306`)。预算耗尽的 peer 写的是另一份五字段检查点副本(`crates/octos-agent/src/agent/budget.rs:584`:status/completed/iteration_budget/iterations_used/checkpoint_commit),工作进度以 commit 形式留在分支上,未完成三个字明示,提示重新派发时提高上限或拆小任务。若 peer 持有写权(`.result-owner: peer` 侧车,#27f/#27h),runtime 不得覆盖它的终局,peer 手写的内容自由,不受四字段模板约束。
-6. **Closed 与 gather**。`closed` 墓碑文件标记终局(`peer_is_closed`,`:1317`),`peer/closed` 通知 client 更新界面;master 用 `peer_gather` 拉取 result.md,或直接 `goal_get` 收账。命令行观察面是 `octos peer list`(`crates/octos-cli/src/commands/peer.rs:54`),同样直读黑板目录,零 serve 依赖。
+6. Closed 与 gather。`closed` 墓碑文件标记终局(`peer_is_closed`,`:1317`),`peer/closed` 通知 client 更新界面;master 用 `peer_gather` 拉取 result.md,或直接 `goal_get` 收账。命令行观察面是 `octos peer list`(`crates/octos-cli/src/commands/peer.rs:54`),同样直读黑板目录,零 serve 依赖。
 
 ## 18.6 黑板:文件布局就是协议
 

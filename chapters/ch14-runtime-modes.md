@@ -12,12 +12,12 @@
 
 ### 14.1.1 从 crates/octos-cli/src/main.rs 到 Command 分派
 
-所有子命令共用一条启动路径。`fn main()` 位于 `../octos/crates/octos-cli/src/main.rs:61`，做四件事：安装错误钩子、解析 clap 参数、合并分层默认值（`octos_cli::config_layer::apply`，`crates/octos-cli/src/main.rs:80`）、执行子命令（`args.command.execute()`，`crates/octos-cli/src/main.rs:101`）。
+所有子命令共用一条启动路径。`fn main()` 位于 `crates/octos-cli/src/main.rs:61`，做四件事：安装错误钩子、解析 clap 参数、合并分层默认值（`octos_cli::config_layer::apply`，`crates/octos-cli/src/main.rs:80`）、执行子命令（`args.command.execute()`，`crates/octos-cli/src/main.rs:101`）。
 
-子命令清单是 `pub enum Command`（`../octos/crates/octos-cli/src/commands/mod.rs:114`），28 个变体每个对应一个命令结构体。`Executable for Command` 的 `match` 分派在 `crates/octos-cli/src/commands/mod.rs:381` 起：
+子命令清单是 `pub enum Command`（`crates/octos-cli/src/commands/mod.rs:114`），28 个变体每个对应一个命令结构体。`Executable for Command` 的 `match` 分派在 `crates/octos-cli/src/commands/mod.rs:381` 起：
 
 ```rust
-// commands/mod.rs:381-399（节选）
+// crates/octos-cli/src/commands/mod.rs:381-399（节选）
 match self {
     Self::Account(cmd) => cmd.execute(),
     Self::Acp(cmd) => cmd.execute(),
@@ -41,15 +41,15 @@ match self {
 | mcp-serve（协议服务） | `crates/octos-cli/src/commands/mcp_serve.rs` | 1,138 行 | M7.2 — octos mcp-serve | `McpTransport`:72、`McpServeCommand`:79、`run_session`:485 |
 | acp（协议服务） | `crates/octos-cli/src/commands/acp.rs` | 3,024 行 | run octos as an ACP agent over stdin/stdout | `AcpCommand`:100、`execute`:160、`run_async`:1163 |
 
-行号均出自 `assets/ch14-facts.md`（基准 9c157101），文件均在 `../octos/crates/octos-cli/src/` 下。
+行号均出自 `assets/ch14-facts.md`（基准 9c157101），文件均在 `crates/octos-cli/src/` 下。
 
 ### 14.1.3 五种运行面的拓扑
 
 ```mermaid
 flowchart LR
     subgraph CLI入口
-        MAIN["octos (main.rs:61)"] --> LAYER["config_layer::apply<br/>合并 cli.&lt;cmd&gt; 分层默认值"]
-        LAYER --> DISPATCH["Command::execute<br/>mod.rs:381"]
+        MAIN["octos (crates/octos-cli/src/main.rs:61)"] --> LAYER["config_layer::apply<br/>合并 cli.&lt;cmd&gt; 分层默认值"]
+        LAYER --> DISPATCH["Command::execute<br/>crates/octos-cli/src/commands/mod.rs:381"]
     end
 
     subgraph 五种运行面
@@ -145,7 +145,7 @@ flowchart TD
 `crates/octos-cli/src/commands/serve.rs:1541` 的分支决定了 serve 的两种形态：
 
 ```rust
-// commands/serve.rs:1541-1546
+// crates/octos-cli/src/commands/serve.rs:1541-1546
 if self.stdio {
     crate::api::ui_protocol_transport::stdio_connection(state).await?;
     tracing::info!("stopping all gateway child processes");
@@ -198,7 +198,7 @@ flowchart TD
 
 ### 14.4.4 coding/autonomy capability 与工具契约
 
-serve 不只是「能聊天」：UI Protocol 的 `SessionOpened.capabilities` 会按客户端声明的 feature 投影出一组 coding 能力（常量在 `../octos/crates/octos-cli/src/api/ui_protocol_transport.rs:2037-2060`，经 `has_ui_feature` 逐项投影）：
+serve 不只是「能聊天」：UI Protocol 的 `SessionOpened.capabilities` 会按客户端声明的 feature 投影出一组 coding 能力（常量在 `crates/octos-cli/src/api/ui_protocol_transport.rs:2037-2060`，经 `has_ui_feature` 逐项投影）：
 
 - `coding.tool_contract.v1`（契约常量 `crates/octos-cli/src/api/coding_tool_contract.rs:12`，契约 id `codex-compatible-coding-v1`，`:13`）
 - `coding.autonomy.v1`（`:2037`）、`coding.agent_control.v1`（`:2042`）、`coding.goal_runtime.v1`（`:2047`）、`coding.loop_runtime.v1`（`:2052`），另有 `coding.monitor_runtime.v1`（`:2057`）
@@ -217,14 +217,14 @@ serve 不只是「能聊天」：UI Protocol 的 `SessionOpened.capabilities` �
 
 ### 14.5.1 mcp-serve：只暴露 run_octos_session
 
-`octos mcp-serve`（`crates/octos-cli/src/commands/mcp_serve.rs`，1,138 行）把 octos 暴露成 MCP server，供外层编排器调度。MCP 实现在 `../octos/crates/octos-agent/src/mcp_server.rs`（1,044 行）：`McpServer`:169、`handle_request`:201、HTTP 传输 `streamable_http_service`:268。
+`octos mcp-serve`（`crates/octos-cli/src/commands/mcp_serve.rs`，1,138 行）把 octos 暴露成 MCP server，供外层编排器调度。MCP 实现在 `crates/octos-agent/src/mcp_server.rs`（1,044 行）：`McpServer`:169、`handle_request`:201、HTTP 传输 `streamable_http_service`:268。
 
 边界设计是这一面的核心：server 只暴露一个 session 级工具 `run_octos_session`（常量 `RUN_OCTOS_SESSION_TOOL`，`crates/octos-agent/src/mcp_server.rs:66`）。每次调用跑一个完整的 octos session（加载 profile、构造 LLM、创建 Agent、执行 prompt、校验 artifact），外层拿到的是聚合结果：它看不到内部 tool calls、iteration events 或进度流。octos 的内部工具目录（59 个工具，见第 6 章）不直接外翻，这是「粗粒度任务边界」对「细粒度工具代理」的取舍：外层编排器负责分解任务，octos session 负责在边界内自主执行。
 
 ```mermaid
 flowchart LR
     ORCH["MCP client / 外层编排器"] -->|"tools/call<br/>run_octos_session"| SRV["McpServer<br/>handle_request:201"]
-    SRV --> SES["run_session<br/>mcp_serve.rs:485"]
+    SRV --> SES["run_session<br/>crates/octos-cli/src/commands/mcp_serve.rs:485"]
     SES --> AGENT["完整 octos session<br/>profile→LLM→Agent→artifact 校验"]
     AGENT --> OUT["聚合结果（outcome）"]
     OUT -->|"无内部 tool calls / 迭代事件"| ORCH
@@ -298,7 +298,7 @@ flowchart TD
 `ConfigWatcher`（`crates/octos-cli/src/config_watcher.rs:28`）每 5 秒轮询配置文件，用 SHA-256 哈希比对检测变更（首行文档即此语义）。变更分类由 `ConfigChange` 枚举表达（`:17`）：
 
 ```rust
-// config_watcher.rs:17-25
+// crates/octos-cli/src/config_watcher.rs:17-25
 pub enum ConfigChange {
     /// Fields that can be applied without restart.
     HotReload {
