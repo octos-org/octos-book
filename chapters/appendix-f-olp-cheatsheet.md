@@ -127,10 +127,92 @@ sub_providers 车道模板(v1 附开箱模板,契约测试 `olp_lane_template_pa
 
 矩阵理由:分析与验证的产出被外层审查兜底,错了可重跑;实施与 keeper 的产出直接进主线与账本,错误成本高,留在主档由 R2 与外层审查控质(同上 :402-403)。
 
+## F.6 端到端追踪(全书贯穿)
+
+前五节是协议侧的静态速查,本节换一个维度:从全书 21 章里挑两条横切链路,把一个用户可见的动作从入口追到出口,验证各章分别讲过的机制在真实执行顺序里如何咬合。写法统一:先给时序图,再按阶段展开,每阶段标注所属章节与源码路径;行号全部沿用各章正文已有的引用,不新造行号(基线见本节末尾版本演化说明)。协议机制(R1 ACK、frontmatter、车道矩阵)F.1 至 F.5 已有速查表,此处只引用、不重复展开。
+
+### Trace 1:一条 Matrix 用户消息如何变成频道里的回复
+
+贯穿章节:第 11 章(消息总线,入站与会话)→ 第 5 章(Agent Loop 六阶段)→ 第 6 章(工具系统执行)→ 第 8 章(上下文压缩),回程再经第 11 章的出口切块机制。场景:用户在 Matrix 房间里发一句「把 ch07 的引用核对一遍」,期待 agent 读完文件、跑检查、把结论回到同一个房间。
+
+```mermaid
+sequenceDiagram
+    participant U as 用户 Matrix
+    participant B as octos-bus 总线
+    participant L as agent-loop 循环
+    participant T as 工具层
+    U->>B: 发送一条消息
+    B->>B: 长轮询 sync 收事件并鉴权
+    B->>B: SessionActor 追加写 JSONL
+    B->>L: AgentHandle 交付 InboundMessage
+    loop 六阶段循环, stop_reason 为 ToolUse
+        L->>L: 消息准备与预算检查
+        L->>L: 调用 LLM 流式消费
+        L->>T: execute_tools 派发工具批
+        T->>T: execute_with_context 执行
+        T-->>L: ToolResult 消息回填
+        L->>L: turn 状态更新
+    end
+    L->>L: 窗口逼近上限, 压缩历史
+    L-->>B: OutboundMessage 最终回复
+    B->>B: split_message 按平台限额切块
+    B-->>U: 分块回复送达 Matrix 房间
+```
+
+**阶段一,入站与落账(第 11 章)。** 用户账号模式下 Matrix 频道对 homeserver 的 Client-Server `/sync` API 做长轮询,超时 30 秒(`SYNC_TIMEOUT_MS`,`crates/octos-bus/src/matrix_user_channel.rs:44`):请求挂着,有事件才返回,返回后立刻发下一个,没有推送权限的自建服务器也能近实时收消息。收到的消息先过频道层的两道门:发送者鉴权 `is_allowed()` 在路由给 Agent 之前执行,默认放行、各频道按需覆盖(`crates/octos-bus/src/channel.rs:27-30`);入站去重针对的是 webhook 类平台的超时重发,`MessageDedup` 用容量 1,000、TTL 60 秒的 LRU 缓存已见消息 ID(`crates/octos-bus/src/dedup.rs:12-25`),Discord 网关重连重放挂的是同一个实例(`crates/octos-bus/src/discord_channel.rs:32`)。所有频道实现同一个 `Channel` trait,26 个方法里只有 `name()`、`start()`、`send()` 没有默认实现(`crates/octos-bus/src/channel.rs:17-265`),所以新频道可以只写三个方法先跑起来。随后消息进入会话层:`SessionActor` 每会话持独立 `SessionHandle`,优先 per-user 布局并在打开时自动迁移旧文件(`crates/octos-bus/src/session.rs:1611-1819`);同 key 写入经 `persist_message_through_canonical_path()` 以 per-key Tokio mutex 串行化,避免多个写入口重复计数(`crates/octos-bus/src/session.rs:2332-2420`)。总线与处理层的解耦靠对称通道 `AgentHandle` / `BusPublisher`(`crates/octos-bus/src/bus.rs:8-77`):所有频道的 inbound 发送端 drop 后,接收端 `recv()` 返回 `None`,处理层自动感知可以优雅退出,不需要额外的 shutdown 信号。
+
+随后消息进入会话层:`SessionActor` 每会话持独立 `SessionHandle`,优先 per-user 布局并在打开时自动迁移旧文件(`crates/octos-bus/src/session.rs:1611-1819`);JSONL 文件头一行是 `SessionMeta` 元数据而非消息,后续每行才是消息(`crates/octos-bus/src/session.rs:560`),追加走 `append_to_disk()`、整体重写走 write-then-rename 的 `rewrite()`,单个会话文件 10MB 封顶防止失控历史耗尽磁盘(`crates/octos-bus/src/session.rs:792`);落盘后的 durable commit observer 只是 best-effort fan-out,失败不回滚(`crates/octos-bus/src/session.rs:71`)。同 key 写入经 `persist_message_through_canonical_path()` 以 per-key Tokio mutex 串行化,避免多个写入口重复计数(`crates/octos-bus/src/session.rs:2332`)。总线与处理层的解耦靠对称通道 `AgentHandle` / `BusPublisher`(`crates/octos-bus/src/bus.rs:8-77`):所有频道的 inbound 发送端 drop 后,接收端 `recv()` 返回 `None`,处理层自动感知可以优雅退出,不需要额外的 shutdown 信号。
+
+**阶段二,进入循环(第 5 章)。** 处理层拿到消息后走 `process_message` 家族,一次 turn 按 ①消息准备、②预算检查、③LLM 调用、⑤工具派发、⑥状态更新推进。①之前历史先送修复管线,入口是 `prepare_conversation_messages`(`crates/octos-agent/src/agent/loop_compaction.rs:27`),统一 tool_call_id、修复消息顺序与工具配对,避免破损历史触发 provider 校验失败。②每次迭代开头跑 `check_budget`(`crates/octos-agent/src/agent/budget.rs:100`),五道闸按固定顺序,任何一道命中即返回 `BudgetStop`(`crates/octos-agent/src/agent/budget.rs:13`),顺序本身就是设计:shutdown 原子加载最先响应,迭代上限次之,两种超时依赖活动跟踪(`crates/octos-agent/src/agent/activity.rs:16`),token 预算最后。③整个调用编排收敛在单一主函数 `call_llm_with_hooks`(`crates/octos-agent/src/agent/llm_call.rs:22`),重试尝试的 token 并入最终 usage 记账;流式消费由 `pub(super)` 的 `consume_stream_with_input_estimate`(`crates/octos-agent/src/agent/streaming.rs:73`)完成。错误路径不是散落的 `unwrap`,而是先经 `classify_loop_error`(`crates/octos-agent/src/agent/loop_runner.rs:313`)归类进 typed retry-bucket 状态机,调用侧拿到的只有 Retry 或 Bail 两个粗粒度动作。响应的 `stop_reason` 决定下一跳:EndTurn 返回、MaxTokens 走续跑与自愈(对话循环的续跑分支在 `crates/octos-agent/src/agent/loop_runner.rs:2171` 附近,nudge 提示续跑上限 2 次)、ToolUse 回到工具派发。
+
+**阶段三,意图变成副作用(第 6 章)。** 工具派发主入口 `execute_tools` 是 `pub(super)`(`crates/octos-agent/src/agent/execution.rs:2483`),它决定串行还是并行、计算批超时、执行前后 hook;取消与 panic 都要投影成 LLM 能读的工具结果消息而不是让循环崩掉。工具本体实现 `Tool` trait(`crates/octos-agent/src/tools/mod.rs:609`),执行层走 M8.1 引入的类型化入口 `execute_with_context`(`crates/octos-agent/src/tools/mod.rs:11-28`),遗留的 `execute` 与类型化入口互相委托、一个工具至多覆写其一。注册与查找在 `ToolRegistry`(`crates/octos-agent/src/tools/registry.rs:536` 的 `register`、`:558` 的 `register_arc`),派发边界叠四层防线:provider 策略拒绝、参数体积上限、`catch_unwind` 的 panic 隔离(一个工具 panic 只降级为失败的 ToolResult,不再连带杀死 session actor)、全局执行超时。被标记 `spawn_only` 的工具在派发点被拦截转后台任务(`crates/octos-agent/src/agent/execution.rs:775` 附近),LLM 拿到的是小型 `task_handle` 信封,五种读法按需检查中间产物而不撑大上下文。本场景里 `read_file` 与 `bash` 的结果作为 ToolResult 消息回填,循环回到 ⑥:`LoopTurnState`(`crates/octos-agent/src/agent/turn_state.rs:59`)累积 usage 与终止原因,下一轮迭代继续。
+
+**阶段四,窗口回收(第 8 章)。** 十几次工具迭代后窗口逼近上限,循环在错误分类处触发 `CompactAndRetry`,带内完成、调用方无须穿透压缩状态(`crates/octos-agent/src/agent/loop_runner.rs:313`)。压缩分层削减:本地占位符、服务端清理、完整摘要三档;最近消息无条件保留满六条且切割点不落在 Tool 消息上,放不下时退回尾部截断 `fallback_truncate()`(`crates/octos-agent/src/agent/compaction.rs:319`)。压缩掉的输出并非丢失:字节可凭 id 用 recall 取回,语义摘要作为可检索 episode 存档,入口压缩与轮内压缩各存一次(`crates/octos-agent/src/agent/loop_runner.rs:1215`)。压缩完成后循环继续,直到 `stop_reason` 为 EndTurn。本场景里 ch07 的引用核对要读多个事实表文件,若没有 recall 机制,同一个源文件会进窗口、被截断、被压缩、再被读取地循环;三层回收把这变成一次读加多次凭 id 取回。
+
+**阶段五,回程(第 11 章出口)。** 最终回复作为 OutboundMessage 回到频道层,超过平台字符限制时长消息交给 coalescing:`split_message()` 按段落、句号、空格、硬切五级优先级找断点,先构造 UTF-8 安全窗口再在窗口内 `rfind`(`crates/octos-bus/src/coalesce.rs:68` 起的两步切割),`MAX_CHUNKS = 50` 防止极长消息碎片化成小消息洪水(`crates/octos-bus/src/coalesce.rs:47`);断点若等于 0 会被跳过,保证向前推进,不会在同一位置切出空块。分块经频道渲染送达 Matrix 房间;频道健康由 `health_check()` 统一暴露给管理面板(`crates/octos-bus/src/channel.rs:245`),而不是散落在各频道自己的管理接口。至此一条消息完成了从平台事件到分块回复的完整往返:入口去重、会话落账、六阶段循环、工具执行、上下文回收、出口切块,每一站都有自己的失败投影。
+
+这条追踪揭示的系统性事实:入口与出口各有一道独立防线(入站去重、出站切块),坏消息进不来也出不去;循环的器官全部 `pub(super)`,crate 边界只暴露循环本身;上下文被当作流体管理,压缩、recall、episode 三层保证信息只降密度不丢失;每一层的失败(重复投递、超限消息、工具 panic)都有降级投影,而不是中断整条链路。
+
+### Trace 2:一个 goal 从创建到双环收口
+
+贯穿章节:第 18 章(goal/peer 双线)→ 第 12 章(并发三层与租约)→ 第 18 章(三条回流通道)→ 第 20 章(外环 OLP 观测与判词)。场景:operator 给 master 一句宏观指令「把附录 F 补两条端到端追踪」,从建目标到 `goal_update complete` 加外环 ACK 收口。
+
+```mermaid
+sequenceDiagram
+    participant O as operator
+    participant M as master keeper
+    participant G as GoalLedger 账本
+    participant P as peer worker
+    participant W as 外环 outer
+    O->>M: 宏观指令
+    M->>G: goal_create 建目标 status 为 active
+    M->>G: goal_plan 分解, goal_dispatch 派任务
+    M->>P: peer_handoff 落盘 brief 与 goal
+    P->>P: boot 读回, turn 循环, 租约保活
+    P->>G: append_finding 落权威历史
+    P-->>W: result.md 与事件流上行
+    W->>W: R1 ACK 与 R2 复验
+    W-->>M: 黑板指导下行
+    M->>G: goal_update complete 过 verifier
+    G-->>O: 账本即审计事实, 双环收口
+```
+
+**阶段一,建账(第 18 章)。** keeper 侧的 `goal_create`(GoalCreateTool,`crates/octos-cli/src/goal_tool.rs` 的 :1495/:1509,准入检查跨两次调用串行化)接线在 `crates/octos-cli/src/runtime/profile.rs:1326`。落账走 `GoalLedger`(`crates/octos-fleet/src/sqlite_ledger.rs:13`):WAL 模式 SQLite,master、进程管理器、peers 是独立进程,共享同一个 `goal-ledgers/<goal_id>.db`;`impl GoalLedger` 的 39 个 pub fn 按用途分五组,目标的每次状态转移、每条发现、每个升级请求、每条决策都留审计痕迹,一个账本文件 6,360 行的体量由此而来。账本状态集是 active、complete、blocked、budget_limited、paused、cleared 六个字符串状态(`crates/octos-fleet/src/sqlite_ledger.rs:39` 注释,终态保护为 complete 与 cleared 两种);`archived` 不在账本状态集里,它是 supervisor 事件流侧的终态标记,两本账的状态集不混写。随后 `goal_plan` 把目标分解到持久 fleet、`goal_dispatch` 把就绪任务发到活的 worker 池(接线 `crates/octos-cli/src/runtime/profile.rs:1341` 与 `:1342`)。计划与执行的机器状态在 fleet 内核(redb),目标与审计在 GoalLedger(SQLite),两本账互不替代;keeper 把目标放进账本而不是对话上下文,正是对「长程目标放在上下文里会腐烂」这一章首问题的回答。
+
+**阶段二,派 peer(第 18 章入口,第 12 章的并发底座)。** 模型侧入口 `peer_handoff` 只做参数校验(`crates/octos-agent/src/tools/peer_handoff.rs:133`),staging 由 `stage_peer`(`crates/octos-cli/src/peers/mod.rs:1563`)按固定顺序落盘 worktree、originator、goal、brief、name;peer boot 时 `read_peer_boot`(`crates/octos-cli/src/peers/host.rs:96`)读回执行上下文,originator 只读一次防止运行中被重绑定。存活语义由第 12 章的三层并发模型托底:peer/lease 层的 `PeerTaskBinding`(`crates/octos-cli/src/peers/mod.rs:166`)把 peer 绑到 supervisor 的 `TaskLivenessLease` 上;fleet 侧的 `Lease`(`crates/octos-fleet/src/records.rs:250`)只有 `owner_epoch` 与 `expires_at_ms` 两个字段,daemon 重启拿新 epoch,旧主人自动失权;supervisor 事件账本 `SupervisorStore`(`crates/octos-cli/src/autonomy/supervisor_store.rs` 的 :697)持久化受监管 agent 组状态,`load_state`(:780)在重启时读回。peer 会话的工具面被刻意收窄:goal 绑定的 peer 只接线 `goal_get` 与 `goal_update`(`crates/octos-cli/src/commands/chat.rs:859`),看得到目标、能把发现记回 master 的账本,拿不到 plan 与 dispatch,无权改写计划。
+
+**阶段三,执行与回流(第 18 章)。** peer 有自己的 turn 循环与 token 预算,Trace 1 的六阶段循环就是它的基准变体,区别只在工具面与预算上限。终局产物由 `write_peer_result_if_peer_session`(`crates/octos-cli/src/api/ui_protocol_transport.rs:14279`)写回黑板,运行时落 frontmatter 四字段 slug/outcome/updated_unix/turn(`:14334`),turn 号由 `result-<n>.md` 计数加一推出;预算耗尽的 peer 另写五字段检查点副本(`crates/octos-agent/src/agent/budget.rs:584`),status/completed/iteration_budget/iterations_used/checkpoint_commit 五个字段把「跑到哪、差多少」留给下一次派发。回流通道有三条,在 `goal_get` 汇聚:live 通道读 `peers/<slug>/result.md`,快但会被覆盖;durable 通道走 `GoalLedger::append_finding`(`crates/octos-fleet/src/sqlite_ledger.rs` 的 :1623),goal-scoped peer 完成 turn 即落盘,重启仍在,是权威历史;escalation 通道在 peer park 时写 `append_escalation`(:1635),master 错过实时通知也能在 `goal_get` 的 `open_escalations` 里看到谁在等。外部事件经 `fleet_wake`(`crates/octos-cli/src/autonomy/fleet_wake.rs`)消费 fleet outbox 转成续跑请求,只有持久化成功(WakeCommit::Durable)才 ack,未持久化的事件租约过期后重投;请求入队点在 `crates/octos-cli/src/autonomy/agent_orchestrator.rs:12963`,`GoalContinue` 与 `GoalWrapUp` 两个变体(`crates/octos-cli/src/autonomy/master_continuation_scheduler.rs` 的 :141/:147)驱动 keeper 下一 tick,后者是预算耗尽后的收尾 turn。peer 终局以 `closed` 墓碑标记(`peer_is_closed`,`:1317`),master 用 `peer_gather` 拉取 result.md 收账;命令行观察面 `octos peer list` 同样直读黑板目录,零 serve 依赖。
+
+**阶段四,外环判词(第 20 章)。** 双环不共享内存,一切协作走可审计的持久信道:上行有事件流、result.md、goal-ledgers、escalation、git diff 与主动问询,下行有 `AGENTS.md`、黑板、原子 commit、inbox 门铃与 TUI 注入。外环上岗前先取主审权锁,以 `octoscode outer-duty hold` 包裹启动,锁即 authority。观测分三层:投递、消费、执行,只看一层必误判,这也是外环最容易犯的错。判词的载体是黑板 Active 区每条意见的 ACK 行:执行后必须补一行,无 ACK 视为未读,外环有权打回交付(`octoscode/docs/OUTER_LOOP_PROTOCOL.md:52` 起,v1 定式语法由 `octoscode/tests/olp_contract.rs:96` 钉住);交付审查按 R2 三档验证级别复核 result.md 的 `verified` 声明,声称 verified 但复验不符视为协议违例,打回并记黑板。frontmatter 的协议 schema 为六字段(`octoscode/docs/OUTER_LOOP_PROTOCOL.md:354`,字段清单 :362 至 :367),消费侧忽略未知字段以保前向兼容,`verified` 与 `protocol` 两字段由 octos 侧写入。内环在 turn 内主动问询走第五信道 `ask_outer`(`octoscode/src/olp_mcp.rs:174`),超时与配额行为见 F.5 表:超时降级按既有黑板指导推进,无法推进则以 ACK(blocked) 收场并注明问询 id;配额超出直接拒绝,提示改用 `report_blocked`。本场景里外环对 F.6 两节初稿的评审意见正是经黑板下行、经 ACK 上行,与 goal 账本的状态机并行运转、互不阻塞。
+
+**阶段五,收口(第 18 章)。** master 调 `goal_update` 主张 complete(GoalUpdateTool,`crates/octos-cli/src/goal_tool.rs` 的 :1163/:1266,接线 `crates/octos-cli/src/runtime/profile.rs:1329`,若配置 verifier 车道则挂独立校验),完成主张要过 verifier 才生效。状态转移的唯一入口 `cas_goal_status`(`crates/octos-fleet/src/sqlite_ledger.rs` 的 :899)在 UPDATE 语句里内嵌预算规则:目标 active 且 `tokens_used >= token_budget` 时直接写 `budget_limited` 而不是调用者要写的终态;`update_goal_status`(`:1498`)走另一条非 CAS 的转移路径,complete 与 blocked 只有模型可到,reopen 只认 blocked、paused、budget_limited 三种入口,账本侧的终态保护是 complete 与 cleared 两种。外环在这一步之后做什么:黑板 Active 区的评审项逐条核对 ACK 是否落地、R2 声明的验证档位是否与实际跑过的命令相符,复核通过才同意 operator 代推分支;若有 wontdo 分歧,按 F.1 的分歧规则只能接受或升级 operator,不得对同一条目再次打回。`goal_update complete` 之后,账本是审计事实,外环的 ACK 与黑板历史区是人可读的对照面,两圈各自留痕、互不覆写;若日后 operator 重开此目标,reopen 的三种入口也都能在账本的状态转移记录里找到出处。
+
+这条追踪揭示的系统性事实:目标的状态只活在一本 SQLite 账里,人读黑板、模型读工具、外环读文件,三种读者看同一个事实的三种投影;所有权用租约与 epoch 表达,不依赖进程内锁,重启即自动纠偏;「完成」是一个要过独立验证的主张,不是一次写操作;错过通知被从异常路径变成普通读路径,`goal_get` 一次调用把三通道的账收齐。
+
 ## 版本演化说明
 
 - v0 至 v1(2026-08-24 生效):R1 ACK 定式语法化(done/wontdo/blocked 与 wontdo 分歧规则);result.md frontmatter v1 schema 固化;sub_providers 车道模板(附录 A、B 随之定稿)。v1 语法只约束生效日起新增的 ACK 行(octoscode/docs/OUTER_LOOP_PROTOCOL.md:9-12)。
 - v1 至 v2(2026-08-30 生效,#38-r1):新增 R7 主审权 OS 独占锁(outer-duty hold/check;锁即 authority、check 仅观察、活锁接管归 operator、metadata/TTL 仅诊断;Linux-only 单机 flock 加 PDEATHSIG,Windows 另立条目,NFS 不适用);`AGENTS.md` 引用同步 v2(同上 :14-17)。
 - R4b 树主权与自动围栏系 octos #20-20c 移植,作为 R4 子条款收录,不升协议版本(同上 :88)。
 - 后续:L3 平台扩展(R7 主审锁 macOS 支持)已于 2026-09-02 立项,守护 reaper 进程加 kqueue 复刻死亡耦合,信道语义不变、不升协议版本(同上 :167-172)。
-- 本附录全部行号以 octoscode 仓库 main @ 1129fa33 为基线,后续协议演进请以仓库内文档为准。
+- 本附录全部行号以 octoscode 仓库 main @ 1129fa33 为基线,后续协议演进请以仓库内文档为准。F.6 追踪基线同全书 octos main @ 9c157101。
