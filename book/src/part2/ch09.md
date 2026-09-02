@@ -230,7 +230,7 @@ rmcp 把这三件事全部接管：完整生命周期握手（`initialize` + `no
 | streamable-HTTP（静态头） | 配 `url`，`oauth` 未开 | `connect_http()`（`mcp.rs:499-528`） |
 | streamable-HTTP + OAuth 2.1 | `url` + `oauth: true` | `mcp_auth.rs::connect_oauth()`（`mcp.rs:501-504`、`../octos/crates/octos-agent/src/mcp_auth.rs:105-186`） |
 
-stdio 路径 spawn 子进程并设 `kill_on_drop`，子进程的存活与 rmcp 会话的 `Arc` 引用绑定：最后一个引用释放时传输关闭、子进程被回收。环境沿用与所有 octos 子进程相同的清理规则：剥掉注入向量变量，只转发 operator 显式列出的 `env` 名，连显式列出的名字也要再过一遍 denylist，防止配置里写 `LD_PRELOAD` 重新打开进程劫持口子（`../octos/crates/octos-agent/src/mcp.rs:452-485`）。值得注意的是 rmcp 的子进程传输用无界 `read_until` 读 JSON-RPC 帧，源码注释承认这丢掉了旧客户端的单行上限，接受的理由是 stdio server 是 operator 自己点名信任的本地二进制（`../octos/crates/octos-agent/src/mcp.rs:465-472`）。
+stdio 路径 spawn 子进程并设 `kill_on_drop`，子进程的存活与 rmcp 会话的 `Arc` 引用绑定：最后一个引用释放时传输关闭、子进程被回收。环境沿用与所有 octos 子进程相同的清理规则：剥掉注入向量变量，只转发 operator 显式列出的 `env` 名，连显式列出的名字也要再过一遍 denylist，防止配置里写 `LD_PRELOAD` 重新打开进程劫持口子（`../octos/crates/octos-agent/src/mcp.rs:452-485`）。rmcp 的子进程传输用无界 `read_until` 读 JSON-RPC 帧，源码注释承认这丢掉了旧客户端的单行上限，接受的理由是 stdio server 是 operator 自己点名信任的本地二进制（`../octos/crates/octos-agent/src/mcp.rs:465-472`）。
 
 HTTP 路径不是"纯 SSE 通道"：rmcp 的 `StreamableHttpClientTransport` 走 streamable-HTTP 语义（POST 请求、可流式响应），静态头（包括一条 `Authorization` bearer token）原样携带，octos 在外面套了 SSRF 防护（见 9.3.4）。
 
