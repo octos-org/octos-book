@@ -1,5 +1,5 @@
 spec: task
-name: "Ch13. 四种运行模式与配置体系"
+name: "Ch14. 运行模式与配置体系(v2 重写,原 Ch13)"
 inherits: project
 tags: [part3, cli, gateway, serve, mcp-serve, config, feature-flags]
 depends: [ch05-agent-loop, ch10-message-bus]
@@ -24,6 +24,15 @@ coarse-grained MCP tool，本章需要避免把它们写成“chat 外壳”或�
 - 工程决策侧栏: 热加载 vs 全重启的边界划分
 - MCP Serve 边界: 只暴露 `run_octos_session`，不暴露 octos 内部 tool catalog
 - Serve coding/autonomy 边界: 暴露 `coding.tool_contract.v1`、agent control、goal/loop primitives，但仍是 backend-supervised orchestration
+
+- 事实边界(2026-09-02 main): `octos --help` 列出 27 个子命令(account acp admin auth channels chat config cron doctor docs init inbox mcp memory profile mcp-serve serve skills status steer update gateway goal ledger clean completions office peer),旧稿「三/四种模式」重构为「五种运行面」:chat(单机)、gateway(多频道常驻)、serve(HTTP/WS 控制面 + `--stdio` UI Protocol 挂载面)、mcp-serve / acp(协议服务面)、goal/peer/ledger/steer(编排面 CLI,细节详见第 18 章);事实表 `assets/ch14-facts.md` 以 `octos --help` 与 `octos serve --help` 输出为准
+- serve 门禁: `--solo` 单人本地安全门、`--danger-full-access` 免沙箱(须 `--solo`)、`--no-network`、`--swarm-backend*`(与 Ch17 互引);octoscode 默认 `DEFAULT_STDIO_COMMAND = "octos serve --stdio --solo"`(`octoscode/src/cli.rs:118`)
+- 配置体系: `3a567a4c` 推理参数 typed schema(profile/llm/*,静默丢字段改为拒绝);`crates/octos-cli/src/config.rs` 与 `profiles.rs` 的 `LlmProfileConfig` / `LlmModelSelectionConfig` / `LlmRouteConfig`;`sub_providers` / `mcp_servers` 只交叉引用 Ch9 与附录 C
+- REST 端点数: 旧稿「91 个」作废,以 `grep -rhoE '\.route\("[^"]+"' crates/octos-cli/src/api/*.rs | sort -u | wc -l` 现算(2026-09-02 为 67)并注明口径
+- 重编号: 本章由 Ch13 改为 Ch14;`chapters/ch13-runtime-modes.md` → `chapters/ch14-runtime-modes.md`,`book/src/part3/ch13.md` → `book/src/part3/ch14.md`,SUMMARY.md 同步
+- 图表: 五种运行面拓扑图、serve 门禁决策流、配置解析与校验流程
+- 工程决策侧栏: 为什么 `--danger-full-access` 必须绑 `--solo`
+- 分析基线: octos main @ 9c157101
 
 ## 边界
 
@@ -102,3 +111,38 @@ coarse-grained MCP tool，本章需要避免把它们写成“chat 外壳”或�
   并且 说明外层 caller 看不到内部 tool calls、iteration events 或 progress stream
   并且 说明 stdio 是 parent-trust auth，HTTP transport 需要 `OCTOS_MCP_SERVER_TOKEN`
   并且 包含 MCP serve session-level dispatch Mermaid 图
+
+场景: 事实表可复现
+  测试: review_ch14_facts_sheet
+  假设 `assets/ch14-facts.md` 已生成
+  当 重跑 `octos --help` 与 `octos serve --help`
+  那么 子命令列表与 serve 标志与事实表一致
+
+场景: 五种运行面齐全
+  测试: review_ch14_run_surfaces
+  当 阅读运行面小节与拓扑图
+  那么 五种运行面各有入口文件引用
+  并且 `--stdio` 挂载面写明 octoscode 默认命令
+
+场景: 门禁语义准确
+  测试: review_ch14_serve_gates
+  当 阅读 serve 门禁小节
+  那么 `--solo` 与 `--danger-full-access` 的绑定关系与 `octos serve --help` 帮助文本一致
+
+场景: 旧数字零残留
+  测试: review_ch14_no_stale_numbers
+  当 在正文检索「三种运行模式」「四种运行模式」「91 个 REST」
+  那么 一处都不出现
+
+场景: 重编号完成
+  测试: review_ch14_renumber
+  当 检查文件名与 SUMMARY.md
+  那么 章节文件为 `chapters/ch14-runtime-modes.md`、镜像为 `book/src/part3/ch14.md`
+  并且 SUMMARY.md 对应条目为第 14 章
+
+场景: 引用零失效
+  测试: review_ch14_refs_valid
+  当 提取正文全部 `crates/...rs:行号` 引用并对照当前源码
+  那么 每个路径存在
+  并且 每个行号区间不超过文件总行数
+  并且 区间内确实含所述符号

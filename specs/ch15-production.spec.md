@@ -1,5 +1,5 @@
 spec: task
-name: "Ch14. 生产化：认证、监控与部署"
+name: "Ch15. 生产化：认证、诊断、监控与多租户(v2 重写,原 Ch14)"
 inherits: project
 tags: [part3, auth, hooks, monitoring, production]
 depends: [ch13-runtime-modes]
@@ -23,6 +23,13 @@ coding/autonomy capability、agent lifecycle、goal/loop primitive 和 superviso
 - 图表: OAuth PKCE 流程图、Hooks 事件生命周期图、熔断器状态机、UI Protocol capability negotiation、Harness events observability layers、生产控制面总图
 - 图表还应覆盖 coding/autonomy 控制面：coding tool contract、AgentOrchestrator、TaskSupervisor、SupervisorStore、MasterContinuationScheduler
 - 工程决策侧栏: 为什么 hooks 用 exit code 而非 JSON 响应
+
+- 事实边界(2026-09-02 main): 三个存储已从 octos-cli 迁到 `crates/octos-store/src/`(`admin_token_store.rs`、`setup_state_store.rs`、`smtp_secret_store.rs`,同目录还有 `admin_audit_store.rs`、`approvals_audit.rs`、`login_allowlist.rs`、`usage_ledger.rs`、`user_store.rs`);多租户实现迁到 `crates/octos-services/src/tenant.rs`(`render_frpc_config` :255 是新的部署路径);诊断独立成 `crates/octos-diagnostics/`(`7f81fa5e` doctor Stage 1、`1801a9e9` GitHub client + update --check Stage 2)
+- 失效引用: 旧稿 8 处 `crates/octos-cli/src/api/ui_protocol.rs` 与存储路径引用全部改指新 crate;事实表 `assets/ch15-facts.md` 列 octos-store / octos-services / octos-diagnostics 全部文件行数与首行文档
+- 结构: 14.1 认证三流保留;14.2 Hooks 缩为交叉引用 Ch10;14.3 可观测性补 doctor 两阶段;14.4 多租户改按 tenant.rs;14.5 控制面改按 octos-store;新增「部署路径:frpc 隧道」一节
+- 重编号: 本章由 Ch14 改为 Ch15;`chapters/ch14-production.md` → `chapters/ch15-production.md`,`book/src/part3/ch14.md` → `book/src/part3/ch15.md`,SUMMARY.md 同步
+- 图表: 生产控制面组件图(三 crate)、doctor 两阶段流程、租户隧道部署图
+- 分析基线: octos main @ 9c157101
 
 ## 边界
 
@@ -122,3 +129,33 @@ coding/autonomy capability、agent lifecycle、goal/loop primitive 和 superviso
   并且 说明 `admin_token.json` 是 hash store
   并且 说明 `smtp_secret.json` 优先于 SMTP env var
   并且 包含生产控制面 Mermaid 图
+
+场景: 事实表可复现
+  测试: review_ch15_facts_sheet
+  假设 `assets/ch15-facts.md` 已生成
+  当 逐条重跑其中记录的命令
+  那么 三个 crate 的文件清单、行数、首行文档与命令输出一致
+
+场景: 存储迁移引用已更新
+  测试: review_ch15_store_refs
+  当 提取正文中 admin_token / setup_state / smtp_secret 相关引用
+  那么 全部指向 `crates/octos-store/src/` 且路径存在
+
+场景: 多租户与部署路径准确
+  测试: review_ch15_tenant_deploy
+  当 阅读多租户与部署小节
+  那么 `render_frpc_config` 引用 `crates/octos-services/src/tenant.rs` 实际行号
+  并且 doctor 两阶段注明 7f81fa5e / 1801a9e9
+
+场景: 重编号完成
+  测试: review_ch15_renumber
+  当 检查文件名与 SUMMARY.md
+  那么 章节文件为 `chapters/ch15-production.md`、镜像为 `book/src/part3/ch15.md`
+  并且 SUMMARY.md 对应条目为第 15 章
+
+场景: 引用零失效
+  测试: review_ch15_refs_valid
+  当 提取正文全部 `crates/...rs:行号` 引用并对照当前源码
+  那么 每个路径存在
+  并且 每个行号区间不超过文件总行数
+  并且 区间内确实含所述符号

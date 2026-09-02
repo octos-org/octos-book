@@ -1,5 +1,5 @@
 spec: task
-name: "Ch12. octos-pipeline：DOT 图驱动的工作流引擎"
+name: "Ch13. octos-pipeline：DOT 图驱动的工作流引擎(v2 段落重写,原 Ch12)"
 inherits: project
 tags: [part3, pipeline, dot, workflow, orchestration]
 depends: [ch05-agent-loop]
@@ -27,6 +27,12 @@ estimate: 1.5d
 - 当前增补重点:
   `PipelineHostContext`, `PipelineContext`, cost reservation, node cost metadata,
   deadline action, mission checkpoint, cumulative fan-out cap, synthetic report delivery
+
+- 事实边界(2026-09-02 main): `crates/octos-pipeline/src/ir.rs:57` 的 `IrNodeKind` 与 `graph.rs:241` 的 `HandlerKind`;`6b0de6ca` 把 DOT 调色板扩到 12 种 IR 节点并新增 ShellCheck / Notify / Wait handler,旧稿「5 种 Handler」作废,以枚举变体现算为准并附命令
+- 新面必补: `92175f53` per-node `max_iterations` 可配;`f26d2291` 结构化 per-node 进度 + ETA + previews 经 harness 事件通道(与 Ch10 互引);`543010be` workflow 子系统抽取为 `crates/octos-workflows/`(`workflow_runtime.rs`、`workflow_families/`、`workflows/`)——本章加一节「workflow 与 pipeline 的分工」
+- 重编号: 本章由 Ch12 改为 Ch13;`chapters/ch12-pipeline.md` → `chapters/ch13-pipeline.md`,`book/src/part3/ch12.md` → `book/src/part3/ch13.md`,SUMMARY.md 同步;交叉引用按 OUTLINE.md v2 重标
+- 勘误方式: 保留结构,改写 handler 小节为 IR 节点小节,新增进度事件与 workflow 分工两小节;引用行号逐条重标
+- 分析基线: octos main @ 9c157101
 
 ## 边界
 
@@ -118,3 +124,28 @@ estimate: 1.5d
   并且 说明 pipeline 级和节点级 cost reservation 的关系
   并且 说明 per-node / terminal validators 如何通过 workspace policy 生效
   并且 说明 deadline action 的 `abort` / `skip` / `retry` / `escalate` 语义
+
+场景: IR 节点种类准确
+  测试: review_ch13_ir_kinds
+  当 阅读 IR 节点小节
+  那么 节点种类数与 `ir.rs` 的 `IrNodeKind` 变体数一致并附统计命令
+  并且 ShellCheck / Notify / Wait 三个新 handler 各有一句话定位与行号
+
+场景: 进度事件与 workflow 分工写明
+  测试: review_ch13_progress_workflows
+  当 阅读新增两小节
+  那么 per-node 进度/ETA 经 harness 事件通道的说明引用 f26d2291 改动文件并以「详见第 10 章」引出事件 ABI
+  并且 `octos-workflows` 与 `octos-pipeline` 的职责边界引用 `workflow_runtime.rs`
+
+场景: 重编号完成
+  测试: review_ch13_renumber
+  当 检查文件名与 SUMMARY.md
+  那么 章节文件为 `chapters/ch13-pipeline.md`、镜像为 `book/src/part3/ch13.md`
+  并且 SUMMARY.md 对应条目为第 13 章
+
+场景: 引用零失效
+  测试: review_ch13_refs_valid
+  当 提取正文全部 `crates/...rs:行号` 引用并对照当前源码
+  那么 每个路径存在
+  并且 每个行号区间不超过文件总行数
+  并且 区间内确实含所述符号
