@@ -16,11 +16,11 @@ octos-memory 的持久化层使用 redb（`crates/octos-memory/src/store.rs`）�
 
 redb 相比 SQLite 的优势在 octos 的场景中非常明确：
 
-**零 C 依赖。** SQLite 是 C 实现的，`rusqlite` 需要编译 C 代码或链接系统库。这与 octos workspace 级别的 `deny(unsafe_code)` 策略冲突：虽然 SQLite 的 C 代码质量极高，但它不受 Rust 编译器的安全检查。redb 是纯 Rust 实现，完全在 `deny(unsafe_code)` 的保护范围内。
+零 C 依赖。 SQLite 是 C 实现的，`rusqlite` 需要编译 C 代码或链接系统库。这与 octos workspace 级别的 `deny(unsafe_code)` 策略冲突：虽然 SQLite 的 C 代码质量极高，但它不受 Rust 编译器的安全检查。redb 是纯 Rust 实现，完全在 `deny(unsafe_code)` 的保护范围内。
 
-**ACID 事务。** redb 提供完整的 ACID 事务支持（读事务和写事务分离），足以满足 episode 存储的持久化需求。octos 不需要 SQL 查询，所有搜索都在内存中的混合索引上进行。
+ACID 事务。 redb 提供完整的 ACID 事务支持（读事务和写事务分离），足以满足 episode 存储的持久化需求。octos 不需要 SQL 查询，所有搜索都在内存中的混合索引上进行。
 
-**单文件部署。** redb 数据库是一个文件（`episodes.redb`），不需要额外的 WAL 文件或 SHM 文件。这简化了部署和备份。
+单文件部署。 redb 数据库是一个文件（`episodes.redb`），不需要额外的 WAL 文件或 SHM 文件。这简化了部署和备份。
 
 ### 4.1.2 三张表结构
 
@@ -60,9 +60,9 @@ pub struct Episode {
 }
 ```
 
-**EpisodeOutcome**（`episode.rs:86-98`）定义了内存层可表达的四种结果：`Success`、`Failure`、`Blocked`、`Cancelled`。它和 Task 的几类终态语义相近，但不能反推"系统一定会把所有终态都写成 Episode"；是否落库取决于上层调用点。当前主 Agent loop 实际只会写入 `Success` episode。
+EpisodeOutcome（`episode.rs:86-98`）定义了内存层可表达的四种结果：`Success`、`Failure`、`Blocked`、`Cancelled`。它和 Task 的几类终态语义相近，但不能反推"系统一定会把所有终态都写成 Episode"；是否落库取决于上层调用点。当前主 Agent loop 实际只会写入 `Success` episode。
 
-**`schema_version`** 字段（`episode.rs:36`，`#[serde(default)]` 在 35）是前向兼容的关键。当 Episode 的格式需要升级时（比如新增字段），旧版本的数据仍然可以通过版本号正确解析。默认值为 `1`（`episode.rs:16-18`，常量在 14），反序列化时如果 JSON 中没有这个字段，自动填充默认值。
+`schema_version` 字段（`episode.rs:36`，`#[serde(default)]` 在 35）是前向兼容的关键。当 Episode 的格式需要升级时（比如新增字段），旧版本的数据仍然可以通过版本号正确解析。默认值为 `1`（`episode.rs:16-18`，常量在 14），反序列化时如果 JSON 中没有这个字段，自动填充默认值。
 
 ### 4.2.2 写入时机
 
@@ -76,9 +76,9 @@ pub struct Episode {
 
 启动时，`EpisodeStore::open()` 会扫描 `EPISODES_TABLE` 和 `EMBEDDINGS_TABLE`，重建内存中的 `HybridIndex`。这意味着 redb 是唯一持久源，HNSW 和倒排索引都是可重建缓存。
 
-**腐败恢复**（`store.rs:84-111`）：`CWD_INDEX_TABLE` 中的值是 JSON 数组（`["id1", "id2", ...]`）。如果之前的写入因为崩溃被中断，JSON 可能是损坏的。代码会尝试从损坏的 JSON 中按引号分割抢救 Episode ID，而不是丢弃整个索引。这种防御性编程确保了即使在非正常关闭后也不会丢失索引数据。
+腐败恢复（`store.rs:84-111`）：`CWD_INDEX_TABLE` 中的值是 JSON 数组（`["id1", "id2", ...]`）。如果之前的写入因为崩溃被中断，JSON 可能是损坏的。代码会尝试从损坏的 JSON 中按引号分割抢救 Episode ID，而不是丢弃整个索引。这种防御性编程确保了即使在非正常关闭后也不会丢失索引数据。
 
-**删除路径**（`store.rs:757-825`）：`delete_by_id()` 会从 `EPISODES_TABLE`、`CWD_INDEX_TABLE` 和 `EMBEDDINGS_TABLE` 中删除对应数据；内存索引侧调用 `HybridIndex::remove()`（`hybrid_search.rs:358-365`），但它不会重排 HNSW 的内部 doc index，而是把 `ids[pos]` 清空作为 tombstone，搜索时过滤空 ID。这是一个典型的 ANN 索引工程取舍：删除快、索引稳定，代价是需要在未来重建索引来清理 tombstone。
+删除路径（`store.rs:757-825`）：`delete_by_id()` 会从 `EPISODES_TABLE`、`CWD_INDEX_TABLE` 和 `EMBEDDINGS_TABLE` 中删除对应数据；内存索引侧调用 `HybridIndex::remove()`（`hybrid_search.rs:358-365`），但它不会重排 HNSW 的内部 doc index，而是把 `ids[pos]` 清空作为 tombstone，搜索时过滤空 ID。这是一个典型的 ANN 索引工程取舍：删除快、索引稳定，代价是需要在未来重建索引来清理 tombstone。
 
 ---
 
@@ -104,7 +104,7 @@ struct HybridIndex {
 
 `inverted` 是倒排索引的核心：给定一个词项（如"重构"），可以快速找到包含该词项的所有文档及其出现频率。
 
-**分词策略**（`hybrid_search.rs:731-737`）：
+分词策略（`hybrid_search.rs:731-737`）：
 
 ```rust
 fn tokenize(text: &str) -> Vec<String> {
@@ -135,7 +135,7 @@ octos 使用的参数（`hybrid_search.rs:83-84`）：
 
 这两个参数值是信息检索领域经过数十年实践验证的经典默认值（源自 TREC 评测实验），octos 直接采用而非自行调优。
 
-**IDF 计算**（`hybrid_search.rs:677`）：
+IDF 计算（`hybrid_search.rs:677`）：
 
 ```rust
 let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
@@ -164,14 +164,14 @@ let normalized = score / max_score;
 
 `bm25_score()` 的两遍开销在高文档频率（df）查询下会成为瓶颈。octos 的分词器不过滤停用词，查询 `the fix` 里的 `the` 会命中几乎全部文档（df ≈ n）。2026-08 的 cc6744ba 提交（#1855）改写了这条热路径，结果不变，高 df 查询实测 10 倍加速。
 
-**累加器按触达量切换**（`hybrid_search.rs:645-699`）。打分前先预估查询会遍历多少 postings（`matched_postings`，L645-649）：
+累加器按触达量切换（`hybrid_search.rs:645-699`）。打分前先预估查询会遍历多少 postings（`matched_postings`，L645-649）：
 
-- **dense 分支**（L671-686）：触达 ≥ `n_docs / 8` 时（`DENSE_ACCUM_DIVISOR = 8`，L89），分配 `vec![0.0f64; n_docs]` 定长数组，用 `touched` 向量去重记录碰过的文档，最后回收。彻底消除哈希开销，代价是一次 O(n) 清零。
-- **sparse 分支**（L688-699）：选择性查询留在 `HashMap` 累加器上，避免为少数几个文档付出整表清零的成本。
+- dense 分支（L671-686）：触达 ≥ `n_docs / 8` 时（`DENSE_ACCUM_DIVISOR = 8`，L89），分配 `vec![0.0f64; n_docs]` 定长数组，用 `touched` 向量去重记录碰过的文档，最后回收。彻底消除哈希开销，代价是一次 O(n) 清零。
+- sparse 分支（L688-699）：选择性查询留在 `HashMap` 累加器上，避免为少数几个文档付出整表清零的成本。
 
 分支选择的注释写得很直白：哈希每个 posting 的开销在查询触达大半语料时占主导，而 selective 查询做 dense 清零是纯开销。BM25 每项贡献恒为正（IDF 对数参数对一切 df ≤ n 都大于 1，tf ≥ 1），dense 路径靠"分数从 0 变非 0"检测首次触碰，`touched` 因此不会漏。
 
-**top-k 分区替代全排序**（`hybrid_search.rs:713-716`）。旧的实现把所有命中文档全量排序再截断；单个高 df 词就能命中整个语料，全排序成了词法查询的最大成本。现在用 `select_nth_unstable_by(limit - 1, by_score_desc)` 做 O(matches) 分区后 `truncate(limit)`。返回类型是 `HashMap`，保留集内的顺序本来就不在契约里，契约只约束哪些候选存活，所以不需要排序。`by_score_desc`（L726-728）用 `partial_cmp` 并把 NaN 视为相等，与 4.3.3 的防 NaN 措施呼应。
+top-k 分区替代全排序（`hybrid_search.rs:713-716`）。旧的实现把所有命中文档全量排序再截断；单个高 df 词就能命中整个语料，全排序成了词法查询的最大成本。现在用 `select_nth_unstable_by(limit - 1, by_score_desc)` 做 O(matches) 分区后 `truncate(limit)`。返回类型是 `HashMap`，保留集内的顺序本来就不在契约里，契约只约束哪些候选存活，所以不需要排序。`by_score_desc`（L726-728）用 `partial_cmp` 并把 NaN 视为相等，与 4.3.3 的防 NaN 措施呼应。
 
 ---
 
@@ -181,8 +181,8 @@ let normalized = score / max_score;
 
 HNSW（Hierarchical Navigable Small World）是目前最流行的近似最近邻（ANN）搜索算法之一。它构建一个多层图结构：
 
-- **底层（Layer 0）**：包含所有数据点，每个点连接到最多 M 个最近邻
-- **上层（Layer 1, 2, ...）**：只包含部分数据点，形成"高速公路"：搜索从最高层开始，快速定位到目标区域，然后逐层下降进行精细搜索
+- 底层（Layer 0）：包含所有数据点，每个点连接到最多 M 个最近邻
+- 上层（Layer 1, 2, ...）：只包含部分数据点，形成"高速公路"：搜索从最高层开始，快速定位到目标区域，然后逐层下降进行精细搜索
 
 这种分层结构让搜索复杂度从线性 O(N) 降低到对数 O(log N)。
 
@@ -219,7 +219,7 @@ fn l2_normalize(v: &[f32]) -> Option<Vec<f32>> {
 }
 ```
 
-**零向量保护**：`norm < f32::EPSILON` 检查（`hybrid_search.rs:743`）防止除以零。当 embedding provider 返回全零向量时（可能因为模型错误或空输入），归一化函数返回 `None`，该文档不会被加入向量索引（但仍然可以通过 BM25 搜索到）。
+零向量保护：`norm < f32::EPSILON` 检查（`hybrid_search.rs:743`）防止除以零。当 embedding provider 返回全零向量时（可能因为模型错误或空输入），归一化函数返回 `None`，该文档不会被加入向量索引（但仍然可以通过 BM25 搜索到）。
 
 ---
 
@@ -238,7 +238,7 @@ flowchart LR
     Fusion --> TopK["Top-K 结果<br/>按分数降序"]
 ```
 
-**图 4-1：混合搜索流程。** 查询同时走 BM25 和 HNSW 两路，结果通过加权求和融合。
+图 4-1：混合搜索流程。 查询同时走 BM25 和 HNSW 两路，结果通过加权求和融合。
 
 ### 4.5.2 权重配置
 
@@ -275,9 +275,9 @@ for doc_id in all_candidates {
 
 当 embedding provider 不可用时（未配置 API key，或 provider 暂时不可达），系统自动降级为纯 BM25 搜索：
 
-1. **插入时**：`insert()` 接受 `embedding: Option<&[f32]>`，为 None 时只更新倒排索引
-2. **搜索时**：`query_embedding` 为 None 时，向量分数全部为 0，最终分数完全由 BM25 决定
-3. **索引为空时**：如果混合索引中没有任何文档，退回到直接扫描 redb 数据库（判定分支 `store.rs:461-467`，扫描实现 `find_relevant_db_scan` 在 `store.rs:554` 起），通过 CWD 索引和词项匹配提供基础检索
+1. 插入时：`insert()` 接受 `embedding: Option<&[f32]>`，为 None 时只更新倒排索引
+2. 搜索时：`query_embedding` 为 None 时，向量分数全部为 0，最终分数完全由 BM25 决定
+3. 索引为空时：如果混合索引中没有任何文档，退回到直接扫描 redb 数据库（判定分支 `store.rs:461-467`，扫描实现 `find_relevant_db_scan` 在 `store.rs:554` 起），通过 CWD 索引和词项匹配提供基础检索
 
 这种三级降级（混合搜索 → BM25 only → DB 扫描）确保了记忆系统在任何条件下都能提供结果，只是精度逐级降低。
 
@@ -285,9 +285,9 @@ for doc_id in all_candidates {
 
 三级降级有一个共同的问题：降级发生时，搜索结果是"悄悄变差"的。一条宽度与索引不符的向量被丢弃，该 episode 静默回落到 BM25-only 召回，查询结果里没有任何迹象。4ccdbe7e（#1851，承接修 1536/768 错宽 bug 的 #1816）把这种状态从"靠翻日志推断"变成"可查询"：
 
-- **`VectorCoverage`**（`hybrid_search.rs:48-58`）是一个四字段快照：`total`（索引内文档数）、`vectorized`（真正进了 HNSW 的文档数）、`dimension_mismatches`（因宽度不符被拒绝的向量数）、`dimension`（索引接受的宽度）。方法 `bm25_only()` / `ratio()` / `has_dimension_mismatch()`（L60-81）给出健康检查可直接上报的指标。
-- **计数而非刷屏**（`hybrid_search.rs:36-38、318-337`）：store 启动重建索引时会重新插入每条持久化 episode，换过 embedding 模型后逐条告警意味着启动日志一条 episode 一行。现在第一条警告后只计数（`mismatch_logged` 标志），由 `vector_coverage()`（`hybrid_search.rs:231-243`；store 侧入口 `store.rs:640`）汇出总数。
-- **启动汇总**（`store.rs:289-300`）：索引重建完成后打一条汇总警告：错宽 embedding 已丢弃、这些 episode 在重新嵌入前是 BM25-only、存储的向量无法转换只能再生。
+- `VectorCoverage`（`hybrid_search.rs:48-58`）是一个四字段快照：`total`（索引内文档数）、`vectorized`（真正进了 HNSW 的文档数）、`dimension_mismatches`（因宽度不符被拒绝的向量数）、`dimension`（索引接受的宽度）。方法 `bm25_only()` / `ratio()` / `has_dimension_mismatch()`（L60-81）给出健康检查可直接上报的指标。
+- 计数而非刷屏（`hybrid_search.rs:36-38、318-337`）：store 启动重建索引时会重新插入每条持久化 episode，换过 embedding 模型后逐条告警意味着启动日志一条 episode 一行。现在第一条警告后只计数（`mismatch_logged` 标志），由 `vector_coverage()`（`hybrid_search.rs:231-243`；store 侧入口 `store.rs:640`）汇出总数。
+- 启动汇总（`store.rs:289-300`）：索引重建完成后打一条汇总警告：错宽 embedding 已丢弃、这些 episode 在重新嵌入前是 BM25-only、存储的向量无法转换只能再生。
 
 配套的修复入口是 `octos memory reindex`（9ad56caa，#1853，见 4.7.2）。
 
@@ -321,8 +321,8 @@ let recent = self.read_recent(7).await?;
 
 当前 MemoryStore 还有一层 entity bank（`memory_store.rs:673-841`）。它把稳定事实按实体拆成 Markdown 文件，路径为 `memory/bank/entities/<slug>.md`。这套机制不是全文搜索，而是两级提示注入：
 
-1. **Level 1：摘要索引。** `get_bank_summary()`（`memory_store.rs:785-841`）遍历所有 entity 文件（目录定位 `bank_dir` 673、枚举 `list_entities` 685），跳过 YAML frontmatter（`extract_abstract`，1222-1241），提取第一个非空、非标题行作为最多 100 字符的摘要，然后把 `- **name**: abstract` 注入系统提示。`chat` 和 `gateway` 都会在长期记忆/每日笔记之后追加这段 Memory Bank 摘要。
-2. **Level 2：按需全文。** 当摘要不够时，Agent 调用 `recall_memory` 工具读取完整 entity 页面。工具会把用户传入的名字 trim、转小写、空格替换成 `-`，再从 `read_entity()` 读取对应 Markdown。
+1. Level 1：摘要索引。 `get_bank_summary()`（`memory_store.rs:785-841`）遍历所有 entity 文件（目录定位 `bank_dir` 673、枚举 `list_entities` 685），跳过 YAML frontmatter（`extract_abstract`，1222-1241），提取第一个非空、非标题行作为最多 100 字符的摘要，然后把 `- **name**: abstract` 注入系统提示。`chat` 和 `gateway` 都会在长期记忆/每日笔记之后追加这段 Memory Bank 摘要。
+2. Level 2：按需全文。 当摘要不够时，Agent 调用 `recall_memory` 工具读取完整 entity 页面。工具会把用户传入的名字 trim、转小写、空格替换成 `-`，再从 `read_entity()` 读取对应 Markdown。
 
 写入由 `save_memory` 工具完成（落盘在 `write_entity`，`memory_store.rs:734`）。它要求内容以标题和一行摘要开头；更新已有 entity 时会先读出旧内容（`read_entity`，718），在工具结果中返回旧版本，提醒调用方不要覆盖掉已有事实。`save_memory` 的并发等级是 `Exclusive`，避免同一批工具调用中读写 Memory Bank 产生半写状态。
 
@@ -330,8 +330,8 @@ let recent = self.read_recent(7).await?;
 
 Memory Bank 的内容会进入每一次未来会话的系统提示，一条被投毒的条目会跨重启、跨渠道持续存在。多渠道入口（Telegram、邮件、web）意味着第三方文本可以借一句"记住这个"到达这些存储。octos-memory 的第六个源文件 `guard.rs`（325 行）就是为此设的写入与渲染双侧闸门：
 
-- **写入闸**（`memory_store.rs:741` 调 `guard.rs:117` 的 `first_threat`）：`write_entity` 对内容做威胁模式扫描，命中即 `bail!` 拒绝落盘。
-- **渲染闸**（`memory_store.rs:815`）：`get_bank_summary` 逐行扫描将要渲染进 bank 索引的行，含注入威胁的行被跳过而不是渲染。名称与摘要分开发检查，因为渲染时拼成 `- **name**: abstract` 一行，拼接缝隙可能重组出注入。
+- 写入闸（`memory_store.rs:741` 调 `guard.rs:117` 的 `first_threat`）：`write_entity` 对内容做威胁模式扫描，命中即 `bail!` 拒绝落盘。
+- 渲染闸（`memory_store.rs:815`）：`get_bank_summary` 逐行扫描将要渲染进 bank 索引的行，含注入威胁的行被跳过而不是渲染。名称与摘要分开发检查，因为渲染时拼成 `- **name**: abstract` 一行，拼接缝隙可能重组出注入。
 
 `first_threat` 的归一化处理两类廉价绕过：零宽字符被过滤、空白折叠；`_`/`-`/`.` 等分隔符映射为空格再扫一遍，让 `ignore_all_previous_instructions` 这类去分隔形式仍能命中。策略明确偏向严格：记忆内容是用户策展的，误报的代价（用户看到理由后改写）远小于静默接受一次注入。
 
@@ -341,7 +341,7 @@ Memory Bank 的内容会进入每一次未来会话的系统提示，一条被�
 >
 > 在 AI 应用领域，Qdrant、Milvus、Pinecone 等向量数据库是主流选择。octos 放弃它们而选择嵌入式方案，理由如下。
 >
-> **方案一：外部向量数据库（Qdrant/Milvus/Pinecone）**
+> 方案一：外部向量数据库（Qdrant/Milvus/Pinecone）
 >
 > 优势：
 > - 支持百万甚至亿级向量规模
@@ -355,7 +355,7 @@ Memory Bank 的内容会进入每一次未来会话的系统提示，一条被�
 > - 运维成本（备份、升级、监控）
 > - 启动依赖：向量库不可用时整个 Agent 无法工作
 >
-> **方案二：嵌入式方案（redb + hnsw_rs）**
+> 方案二：嵌入式方案（redb + hnsw_rs）
 >
 > 优势：
 > - 零部署依赖：`cargo install` 或下载二进制即可使用
@@ -368,7 +368,7 @@ Memory Bank 的内容会进入每一次未来会话的系统提示，一条被�
 > - 搜索功能有限（无过滤、无多向量支持）
 > - 非分布式（单实例）
 >
-> **octos 的选择：嵌入式方案。**
+> octos 的选择：嵌入式方案。
 >
 > 关键洞察是规模需求的差异。RAG 应用需要在百万文档中搜索，这是外部向量库的主战场。但 Agent 的经验记忆是增量积累的：每天几个到几十个 episode，一年下来可能只有几千个。10,000 的容量上限对于绝大多数使用场景绰绰有余。
 >
@@ -380,19 +380,19 @@ Memory Bank 的内容会进入每一次未来会话的系统提示，一条被�
 
 octos-memory 用六个源文件、`wc -l` 口径 6,428 行 Rust 构建了一个自包含的 Agent 记忆系统：
 
-1. **redb 嵌入式存储**：三张表（Episodes/CWD 索引/向量嵌入），纯 Rust 实现，ACID 事务保证，单文件部署。
+1. redb 嵌入式存储：三张表（Episodes/CWD 索引/向量嵌入），纯 Rust 实现，ACID 事务保证，单文件部署。
 
-2. **BM25 全文搜索**：经典 K1=1.2/B=0.75 参数，倒排索引 + IDF 加权，epsilon 防 NaN 归一化。
+2. BM25 全文搜索：经典 K1=1.2/B=0.75 参数，倒排索引 + IDF 加权，epsilon 防 NaN 归一化。
 
-3. **HNSW 向量索引**：`hnsw_rs` crate 提供分层图搜索，L2 归一化保证 cosine similarity 正确性，零向量保护防止索引污染。
+3. HNSW 向量索引：`hnsw_rs` crate 提供分层图搜索，L2 归一化保证 cosine similarity 正确性，零向量保护防止索引污染。
 
-4. **混合排名融合**：0.7 向量 + 0.3 BM25 加权求和，候选集取并集，三级降级（混合→BM25→DB 扫描）确保任何条件下都能返回结果。
+4. 混合排名融合：0.7 向量 + 0.3 BM25 加权求和，候选集取并集，三级降级（混合→BM25→DB 扫描）确保任何条件下都能返回结果。
 
-5. **Markdown + Memory Bank**：`MEMORY.md`、每日笔记和 entity bank 共同组成提示侧记忆；entity 摘要自动注入，全文通过 `recall_memory` 按需加载；`guard.rs` 在写入与渲染两侧拦截注入内容。
+5. Markdown + Memory Bank：`MEMORY.md`、每日笔记和 entity bank 共同组成提示侧记忆；entity 摘要自动注入，全文通过 `recall_memory` 按需加载；`guard.rs` 在写入与渲染两侧拦截注入内容。
 
 ### 4.7.1 行数口径
 
-本章行数统一按 `find crates/octos-memory -name '*.rs' | xargs wc -l | tail -1` 实测（2026-09-02，基线 9c157101）：**6,428 行**，六个源文件（`memory_store.rs` 2,417、`store.rs` 1,940、`hybrid_search.rs` 1,527、`guard.rs` 325、`episode.rs` 195、`lib.rs` 24），含测试与注释。此前"约 1,750 行"与"1,635 行"两个数字分别对应旧基线与 tokei 代码行口径，本次勘误统一为 `wc -l` 原始口径。
+本章行数统一按 `find crates/octos-memory -name '*.rs' | xargs wc -l | tail -1` 实测（2026-09-02，基线 9c157101）：6,428 行，六个源文件（`memory_store.rs` 2,417、`store.rs` 1,940、`hybrid_search.rs` 1,527、`guard.rs` 325、`episode.rs` 195、`lib.rs` 24），含测试与注释。此前"约 1,750 行"与"1,635 行"两个数字分别对应旧基线与 tokei 代码行口径，本次勘误统一为 `wc -l` 原始口径。
 
 ### 4.7.2 运维：`octos memory reindex`
 
@@ -404,21 +404,21 @@ octos-memory 用六个源文件、`wc -l` 口径 6,428 行 Rust 构建了一个�
 
 ## 延伸阅读
 
-- **BM25 算法**：Robertson & Zaragoza, "The Probabilistic Relevance Framework: BM25 and Beyond"（Foundation and Trends in IR, 2009）
-- **HNSW 算法**：Malkov & Yashunin, "Efficient and Robust Approximate Nearest Neighbor using Hierarchical Navigable Small World Graphs"（IEEE TPAMI, 2020）
-- **redb**：https://docs.rs/redb/latest/redb/ — 纯 Rust 嵌入式数据库
-- **hnsw_rs**：https://docs.rs/hnsw_rs/latest/hnsw_rs/ — Rust HNSW 实现
-- **混合搜索**：Anthropic 的 "Contextual Retrieval" 博文讨论了 BM25 + 向量搜索的互补价值
+- BM25 算法：Robertson & Zaragoza, "The Probabilistic Relevance Framework: BM25 and Beyond"（Foundation and Trends in IR, 2009）
+- HNSW 算法：Malkov & Yashunin, "Efficient and Robust Approximate Nearest Neighbor using Hierarchical Navigable Small World Graphs"（IEEE TPAMI, 2020）
+- redb：https://docs.rs/redb/latest/redb/ — 纯 Rust 嵌入式数据库
+- hnsw_rs：https://docs.rs/hnsw_rs/latest/hnsw_rs/ — Rust HNSW 实现
+- 混合搜索：Anthropic 的 "Contextual Retrieval" 博文讨论了 BM25 + 向量搜索的互补价值
 
 ## 思考题
 
-1. **BM25 参数调优**：如果 Agent 主要处理中文任务，K1 和 B 参数需要调整吗？中文的分词粒度（单字 vs 词组）如何影响 BM25 的检索效果？
+1. BM25 参数调优：如果 Agent 主要处理中文任务，K1 和 B 参数需要调整吗？中文的分词粒度（单字 vs 词组）如何影响 BM25 的检索效果？
 
-2. **向量维度选择**：octos 默认使用 1536 维向量（OpenAI text-embedding-3-small）。如果切换到 384 维的轻量模型，对检索质量和内存占用的影响分别是什么？
+2. 向量维度选择：octos 默认使用 1536 维向量（OpenAI text-embedding-3-small）。如果切换到 384 维的轻量模型，对检索质量和内存占用的影响分别是什么？
 
-3. **混合权重的动态调整**：固定的 0.7/0.3 权重是否最优？设想一种根据查询类型动态调整权重的策略：关键词精确查询偏向 BM25，开放式语义查询偏向向量搜索。这需要在架构上做什么修改？
+3. 混合权重的动态调整：固定的 0.7/0.3 权重是否最优？设想一种根据查询类型动态调整权重的策略：关键词精确查询偏向 BM25，开放式语义查询偏向向量搜索。这需要在架构上做什么修改？
 
-4. **规模瓶颈**：如果 octos 需要支持企业级部署（10 万个 episode），当前的嵌入式方案需要做哪些改造？有没有介于"嵌入式"和"外部数据库"之间的中间方案？
+4. 规模瓶颈：如果 octos 需要支持企业级部署（10 万个 episode），当前的嵌入式方案需要做哪些改造？有没有介于"嵌入式"和"外部数据库"之间的中间方案？
 
 ---
 
