@@ -12,9 +12,9 @@
 
 ### 14.1.1 从 crates/octos-cli/src/main.rs 到 Command 分派
 
-所有子命令共用一条启动路径。`fn main()` 位于 `../octos/crates/octos-cli/src/main.rs:61`，做四件事：安装错误钩子、解析 clap 参数、合并分层默认值（`octos_cli::config_layer::apply`，`main.rs:80`）、执行子命令（`args.command.execute()`，`main.rs:101`）。
+所有子命令共用一条启动路径。`fn main()` 位于 `../octos/crates/octos-cli/src/main.rs:61`，做四件事：安装错误钩子、解析 clap 参数、合并分层默认值（`octos_cli::config_layer::apply`，`crates/octos-cli/src/main.rs:80`）、执行子命令（`args.command.execute()`，`crates/octos-cli/src/main.rs:101`）。
 
-子命令清单是 `pub enum Command`（`../octos/crates/octos-cli/src/commands/mod.rs:114`），28 个变体每个对应一个命令结构体。`Executable for Command` 的 `match` 分派在 `mod.rs:381` 起：
+子命令清单是 `pub enum Command`（`../octos/crates/octos-cli/src/commands/mod.rs:114`），28 个变体每个对应一个命令结构体。`Executable for Command` 的 `match` 分派在 `crates/octos-cli/src/commands/mod.rs:381` 起：
 
 ```rust
 // commands/mod.rs:381-399（节选）
