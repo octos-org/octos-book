@@ -63,7 +63,7 @@ profile 文件位于 `~/.octos/profiles/<id>.json`（`crates/octos-cli/src/profi
 
 | 字段路径 | 类型 | 默认值 | 作用 | 来源行号 |
 |---------|------|--------|------|---------|
-| `gateway.channels[]` | `array` < ChannelEntry > | `[{"type":"cli",…}]` | 启用的频道列表 | `crates/octos-cli/src/config.rs:1527` |
+| `gateway.channels[]` | `array<ChannelEntry>` | `[{"type":"cli",…}]` | 启用的频道列表 | `crates/octos-cli/src/config.rs:1527` |
 | `gateway.channels[].type` | string | 必填 | 频道类型：`"cli"` / `"telegram"` / `"discord"` | `crates/octos-cli/src/config.rs:1642` |
 | `gateway.channels[].allowed_senders` | string[] | `[]`（= 允许所有人） | 允许的发送者 ID | `crates/octos-cli/src/config.rs:1646` |
 | `gateway.channels[].settings` | json | `{}` | 频道特定设置 | `crates/octos-cli/src/config.rs:1650` |
@@ -359,7 +359,7 @@ spawn 子 agent 可引用的模型车道。保留键：`goal_verifier`（#1935�
 | `validation.on_turn_end` | string[] | `[]` | Tier 1：每轮末跑的廉价检查（<100ms） | `crates/octos-agent/src/workspace_policy.rs:118` |
 | `validation.on_source_change` | string[] | `[]` | Tier 2：源码变更时跑的中档检查（1-5s） | `crates/octos-agent/src/workspace_policy.rs:121` |
 | `validation.on_completion` | string[] | `[]` | Tier 3：完成/发布才跑的昂贵检查（10-30s） | `crates/octos-agent/src/workspace_policy.rs:124` |
-| `validation.validators[]` | `array` < Validator > | `[]` | 类型化声明式校验器（M4.3） | `crates/octos-agent/src/workspace_policy.rs:127` |
+| `validation.validators[]` | `array<Validator>` | `[]` | 类型化声明式校验器（M4.3） | `crates/octos-agent/src/workspace_policy.rs:127` |
 
 每个 `Validator`（`crates/octos-agent/src/workspace_policy.rs:143`）：
 

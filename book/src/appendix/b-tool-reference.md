@@ -7,7 +7,7 @@
 octos 的工具面没有一个稳定的"总工具数"。同一个 `crates/octos-agent/src/tools/` 目录，从三个口径数会得到三个数字，本附录全部采用实测口径（commit `9c157101`，2026-09-03）：
 
 - 目录口径：`crates/octos-agent/src/tools/` 共 58 个条目（57 个 `.rs` 文件加 1 个 `admin/` 子目录），与第 6 章一致；
-- 注册名口径：这 58 个条目在不同构造路径下注册出 80 个模型可见的注册名，即本表的核心 60 + admin 20。`crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs` 一个文件就承载 15 个注册名，而 `crates/octos-agent/src/tools/replacer.rs`、`crates/octos-agent/src/tools/write_grant.rs` 这类支撑模块一个注册名都没有，所以"文件数不等于工具数"在两个方向上同时成立；
+- 注册名口径：这 58 个条目在不同构造路径下注册出 80 个模型可见的注册名，即本表的核心 60 + admin 20。`crates/octos-agent/src/tools/coding_tools.rs` 一个文件就承载 15 个注册名，而 `crates/octos-agent/src/tools/replacer.rs`、`crates/octos-agent/src/tools/write_grant.rs` 这类支撑模块一个注册名都没有，所以"文件数不等于工具数"在两个方向上同时成立；
 - 分组口径：策略分组以 `crates/octos-agent/src/tools/policy.rs:186` 的 `TOOL_GROUPS`（10 组）为准。
 
 旧稿按固定数量罗列内置工具的写法已废弃：profile 过滤、feature 编译门、`spawn_only` 标记和 chat 网关注册都会改变一次会话实际可见的工具集合，记住分层注册模型比记住一个数字有用。表中的"一句话职责"取自各文件首行 `//!` 文档或 `fn description()` 返回串，逐条可复核。
@@ -129,7 +129,7 @@ octos 的工具面没有一个稳定的"总工具数"。同一个 `crates/octos-
 
 ### B.2.7 代码与结构（coding）
 
-这一域是 Codex 兼容工具面的主体：`crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs` 单文件承载 15 个注册名，其中 9 个进入 P0 合约，其余 6 个是 #972/#1148/#1149 的扩展入口，加上 feature 门控的 `code_structure`，共 13 个注册名；所有 15 名都在 `crates/octos-agent/src/tools/registry.rs:1254` 的 `with_builtins_and_permissions`（注册体自 1283 起）注册。
+这一域是 Codex 兼容工具面的主体：`crates/octos-agent/src/tools/coding_tools.rs` 单文件承载 15 个注册名，其中 9 个进入 P0 合约，其余 6 个是 #972/#1148/#1149 的扩展入口，加上 feature 门控的 `code_structure`，共 13 个注册名；所有 15 名都在 `crates/octos-agent/src/tools/registry.rs:1254` 的 `with_builtins_and_permissions`（注册体自 1283 起）注册。
 
 ### B.2.8 Git
 
@@ -145,7 +145,7 @@ admin 域的 20 个注册名全部来自 `crates/octos-agent/src/tools/admin/` �
 
 ## B.3 P0 required 十项与 coding shim 的关系
 
-Codex 兼容合约声明的 P0 必备集定义在 `crates/octos-cli/src/api/coding_tool_contract.rs:85` 的 `CODING_P0_REQUIRED_TOOL_NAMES`，共十项：`apply_patch`、`exec_command`、`write_stdin`、`update_plan`、`request_user_input`、`spawn_agent`、`send_input`、`resume_agent`、`wait_agent`、`close_agent`。十项中九项由 `crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs` 提供，唯一例外 `apply_patch` 是原生文件工具（`crates/octos-agent/src/tools/apply_patch.rs`），不在 crates/octos-agent/src/tools/coding_tools.rs 内。
+Codex 兼容合约声明的 P0 必备集定义在 `crates/octos-cli/src/api/coding_tool_contract.rs:85` 的 `CODING_P0_REQUIRED_TOOL_NAMES`，共十项：`apply_patch`、`exec_command`、`write_stdin`、`update_plan`、`request_user_input`、`spawn_agent`、`send_input`、`resume_agent`、`wait_agent`、`close_agent`。十项中九项由 `crates/octos-agent/src/tools/coding_tools.rs` 提供，唯一例外 `apply_patch` 是原生文件工具（`crates/octos-agent/src/tools/apply_patch.rs`），不在 crates/octos-agent/src/tools/coding_tools.rs 内。
 
 ```mermaid
 graph LR
@@ -163,17 +163,17 @@ graph LR
 
 | 注册名 | 与 P0 的关系 | 依据（全路径） |
 |---|---|---|
-| `exec_command` | P0 成员 | crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs:382；crates/octos-cli/src/api/coding_tool_contract.rs:85 |
-| `write_stdin` | P0 成员 | crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs:739 |
-| `spawn_agent` | P0 成员 | crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs:1284 |
-| `bash` | P0 之外，#1172 命名对齐别名，与 `shell`/`exec_command` 共享策略与沙箱，三者一处 deny 处处 deny | crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs:1946；crates/octos-agent/src/tools/registry.rs:1281-1290 |
-| `delegate` | P0 之外，#1172 一站式 wrapper（`DelegateAliasTool`，绑定 `spawn_agent`，`group:sessions` 成员） | crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs:2429；crates/octos-agent/src/tools/registry.rs:548,566,1284 |
-| `view_image` | P0 之外，#972/M14-B P1 图像检视，只读并受 filesystem_scope 约束 | crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs:2801；crates/octos-agent/src/tools/registry.rs:1461-1464 |
-| `tool_search` | P0 之外，#1148 的动态发现入口，读 live catalog | crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs:3150 |
-| `tool_suggest` | P0 之外，#1148 的按任务推荐入口 | crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs:3251 |
-| `image_generation` | P0 之外，#1149/M14-B P2；当前返回 typed `coding_tool_unsupported`（wire 合约完整，尚无生成后端绑定） | crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs:3391；crates/octos-agent/src/tools/registry.rs:1368-1370 注释原文 |
+| `exec_command` | P0 成员 | crates/octos-agent/src/tools/coding_tools.rs:382；crates/octos-cli/src/api/coding_tool_contract.rs:85 |
+| `write_stdin` | P0 成员 | crates/octos-agent/src/tools/coding_tools.rs:739 |
+| `spawn_agent` | P0 成员 | crates/octos-agent/src/tools/coding_tools.rs:1284 |
+| `bash` | P0 之外，#1172 命名对齐别名，与 `shell`/`exec_command` 共享策略与沙箱，三者一处 deny 处处 deny | crates/octos-agent/src/tools/coding_tools.rs:1946；crates/octos-agent/src/tools/registry.rs:1281-1290 |
+| `delegate` | P0 之外，#1172 一站式 wrapper（`DelegateAliasTool`，绑定 `spawn_agent`，`group:sessions` 成员） | crates/octos-agent/src/tools/coding_tools.rs:2429；crates/octos-agent/src/tools/registry.rs:548,566,1284 |
+| `view_image` | P0 之外，#972/M14-B P1 图像检视，只读并受 filesystem_scope 约束 | crates/octos-agent/src/tools/coding_tools.rs:2801；crates/octos-agent/src/tools/registry.rs:1461-1464 |
+| `tool_search` | P0 之外，#1148 的动态发现入口，读 live catalog | crates/octos-agent/src/tools/coding_tools.rs:3150 |
+| `tool_suggest` | P0 之外，#1148 的按任务推荐入口 | crates/octos-agent/src/tools/coding_tools.rs:3251 |
+| `image_generation` | P0 之外，#1149/M14-B P2；当前返回 typed `coding_tool_unsupported`（wire 合约完整，尚无生成后端绑定） | crates/octos-agent/src/tools/coding_tools.rs:3391；crates/octos-agent/src/tools/registry.rs:1368-1370 注释原文 |
 
-两点合约语义需要单独说明。其一，`send_input` 虽列名 P0，但当前不是实时对话投递：它以 `simple_codex_tool!` 宏注册（`crates/octos-agent/src/tools/crates/octos-agent/src/tools/coding_tools.rs:1839-1842`），写入的是受监督任务的输入通道而非交互式会话。其二，`image_generation` 的 typed unsupported 是有意的合约姿态：调用方得到的是结构化的"此环境不支持"信封，而不是 tool not found 错误，前端可以据此降级 UI 而不破坏协议。
+两点合约语义需要单独说明。其一，`send_input` 虽列名 P0，但当前不是实时对话投递：它以 `simple_codex_tool!` 宏注册（`crates/octos-agent/src/tools/coding_tools.rs:1839-1842`），写入的是受监督任务的输入通道而非交互式会话。其二，`image_generation` 的 typed unsupported 是有意的合约姿态：调用方得到的是结构化的"此环境不支持"信封，而不是 tool not found 错误，前端可以据此降级 UI 而不破坏协议。
 
 > **工程决策侧栏：为什么别名必须进组（#1172）**
 > deny-wins 策略按"注册名或组名"匹配。`bash` 与 `delegate` 这类别名若不进 `group:runtime`/`group:sessions`，一个禁用了执行或子代理的 profile 仍会从别名绕回原能力。修复方式是把别名写进组定义（`crates/octos-agent/src/tools/policy.rs:201-205` 注释原文），并让 `delegate` 持有被绑定 `spawn_agent` 的 Arc 句柄这一事实也成为组注释的一部分：策略层覆盖的是"每一个入口"，而不是"每一个实现文件"。
