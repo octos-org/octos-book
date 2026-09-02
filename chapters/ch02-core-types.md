@@ -70,7 +70,7 @@ stateDiagram-v2
     Blocked --> Failed: 超时或取消
 ```
 
-**图 2-1：Task 状态机。** 每个状态转换对应一个明确的业务事件。注意 Pending 只能转向 InProgress（不能直接跳到 Completed），InProgress 是唯一可以到达 Completed 的路径。这确保了每个完成的任务都经历过执行阶段。
+图 2-1：Task 状态机。 每个状态转换对应一个明确的业务事件。注意 Pending 只能转向 InProgress（不能直接跳到 Completed），InProgress 是唯一可以到达 Completed 的路径。这确保了每个完成的任务都经历过执行阶段。
 
 ### 2.1.4 TaskKind：五种任务类型
 
@@ -104,19 +104,7 @@ pub struct TaskContext {
 
 `working_memory` 和 `episodic_refs` 的区别值得关注：`working_memory` 是当前会话的短期记忆（最近几轮对话），而 `episodic_refs` 是从长期记忆中检索出的相关片段（详见第 4 章）。这种双记忆架构模仿了人类的工作记忆（working memory）和情景记忆（episodic memory）的区分。
 
-TaskResult（`crates/octos-core/src/task.rs:125-157`）记录任务的产出：
-
-```rust
-pub struct TaskResult {
-    pub schema_version: u32,
-    pub success: bool,
-    pub output: String,
-    pub files_modified: Vec<PathBuf>,
-    pub files_to_send: Vec<PathBuf>,
-    pub subtasks: Vec<TaskId>,
-    pub token_usage: TokenUsage,
-}
-```
+TaskResult（`crates/octos-core/src/task.rs:125-157`）记录任务的产出，共 7 个字段：`schema_version`（durable ABI 版本，见 2.3 节）、`success`、`output`、`files_modified`、`files_to_send`、`subtasks`、`token_usage`。
 
 TokenUsage（`crates/octos-core/src/task.rs:159-173`）值得特别关注。它不只追踪 input/output tokens，还包含 `reasoning_tokens`（思维链 token，用于 o1、kimi-k2.5 等推理模型）和 `cache_read_tokens`/`cache_write_tokens`（Provider 缓存命中/写入）。这五个维度让上层可以精确计算成本和优化缓存策略。序列化时，为零的字段会被跳过，避免 JSON 膨胀。
 
@@ -196,32 +184,9 @@ pub enum MessageRole {
 }
 ```
 
-关键在于它的两个方法实现。`as_str()`（`types.rs:453-463`）返回 `&'static str`：
+关键在于它的两个方法实现。`as_str()`（`types.rs:453-463`）返回 `&'static str`，四个变体分别映射为 `"system"`、`"user"`、`"assistant"`、`"tool"`，一个穷尽的 `match`，没有通配分支，新增变体时编译器会强制补齐这里的映射。
 
-```rust
-impl MessageRole {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::System => "system",
-            Self::User => "user",
-            Self::Assistant => "assistant",
-            Self::Tool => "tool",
-        }
-    }
-}
-```
-
-`Display` trait 实现（`types.rs:465-469`）直接委托给 `as_str()`：
-
-```rust
-impl fmt::Display for MessageRole {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-```
-
-为什么要同时实现这两个？因为它们服务于不同场景：
+`Display` trait 实现（`types.rs:465-469`）的函数体只有一行 `f.write_str(self.as_str())`。为什么要同时实现这两个？因为它们服务于不同场景：
 
 - `as_str()` 接受 `self`（按值传递），返回 `&'static str`。这是可行的因为 `MessageRole` 实现了 `Copy` trait：枚举只有四个无数据变体，拷贝成本等同于拷贝一个字节。按值传递用于需要零分配的场景，比如构建 API 请求时设置 JSON 字段值。
 - `Display` 用于格式化字符串（`format!()`、`println!()` 等），是 Rust 生态的标准接口。
@@ -245,17 +210,9 @@ pub struct ToolCall {
 
 ### 2.2.5 便捷构造函数
 
-Message 仍保留了三个 legacy 便捷构造函数（`types.rs:355-417`），用于测试、反序列化 round-trip 和旧调用点：
+Message 仍保留了三个 legacy 便捷构造函数（`types.rs:355-417`），用于测试、反序列化 round-trip 和旧调用点：`Message::user(content)`、`Message::assistant(content)`、`Message::system(content)`，签名均为 `(content: impl Into<String>) -> Self`。
 
-```rust
-impl Message {
-    pub fn user(content: impl Into<String>) -> Self { /* ... */ }
-    pub fn assistant(content: impl Into<String>) -> Self { /* ... */ }
-    pub fn system(content: impl Into<String>) -> Self { /* ... */ }
-}
-```
-
-注意参数类型是 `impl Into<String>` 而非 `String` 或 `&str`。这让调用者可以传入 `String`、`&str`、甚至 `Cow<str>`，编译器会自动选择最高效的转换路径。这是 Rust 中常见的 API 设计模式：通过泛型减少调用者的类型转换负担。
+注意参数类型是 `impl Into<String>` 而非 `String` 或 `&str`。这让调用者可以传入 `String`、`&str`、甚至 `Cow<str>`，编译器会自动选择最高效的转换路径。这是 Rust 中常见的 API 设计模式：通过泛型减少调用者的类型转换负担。三个构造器的函数体都只是把 content 包进对应 role 的 Message，不再赘述。
 
 ---
 
@@ -338,7 +295,7 @@ pub struct Error {
 }
 ```
 
-这里的关键设计是**三层结构**：`kind` 分类错误类型，`context` 添加执行上下文，`suggestion` 提供可操作的修复建议。
+这里的关键设计是三层结构：`kind` 分类错误类型，`context` 添加执行上下文，`suggestion` 提供可操作的修复建议。
 
 ErrorKind 是一个 15 变体的枚举（`error.rs:20-56`），覆盖了系统中所有错误类别：
 
@@ -402,20 +359,7 @@ Display 实现（`error.rs:174-224`）将这三层信息格式化为用户友好
 
 ### 2.5.1 问题：UTF-8 的多字节陷阱
 
-UTF-8 是一种变长编码：ASCII 字符占 1 字节，中文字符占 3 字节，emoji 占 4 字节。当你需要将字符串截断到 N 个字节时，截断点可能正好落在一个多字节字符的中间。
-
-```
-"你好世界" 的 UTF-8 编码：
-你 = [E4 BD A0]  (3 bytes)
-好 = [E5 A5 BD]  (3 bytes)
-世 = [E4 B8 96]  (3 bytes)
-界 = [E7 95 8C]  (3 bytes)
-总计 12 bytes
-
-如果截断到 7 bytes：
-[E4 BD A0] [E5 A5 BD] [E4]  ← 最后一个字节是 "世" 的第一个字节
-                              这不是一个合法的 UTF-8 序列！
-```
+UTF-8 是一种变长编码：ASCII 字符占 1 字节，中文字符占 3 字节，emoji 占 4 字节。当你需要将字符串截断到 N 个字节时，截断点可能正好落在一个多字节字符的中间。以"你好世界"为例：每个汉字 3 字节，四个字共 12 字节；若截断到 7 字节，保留的是 [E4 BD A0] [E5 A5 BD] 加上孤立的 [E4]，最后这个字节是"世"的第一个字节，不再构成合法的 UTF-8 序列。
 
 在 C/C++ 中，这种截断会产生无效的 UTF-8 字符串，可能导致下游解析崩溃。Python 的 `str[:7]` 按字符而非字节截断，避免了这个问题但无法精确控制字节预算。
 
@@ -565,7 +509,7 @@ pub enum AgentMessage {
 
 `ABORT_TRIGGERS` 数组（`abort.rs:32-71`）包含 9 种语言、28 个触发词（源文件顶部注释写 30+，以数组实际条目数为准）。`is_abort_trigger()`（`abort.rs:6-13`）对输入进行 trim + lowercase 后精确匹配。`abort_response()`（`abort.rs:15-30`）返回与触发语言匹配的本地化取消确认。
 
-代码注释还记录了**故意排除的词**："wait"、"exit"、"para" 在正常对话中出现频率太高，会导致误判。这是一个务实的设计选择：宁可漏掉一些中断信号（用户可以再说一次），也不要在正常对话中误触发中断。
+代码注释还记录了故意排除的词："wait"、"exit"、"para" 在正常对话中出现频率太高，会导致误判。这是一个务实的设计选择：宁可漏掉一些中断信号（用户可以再说一次），也不要在正常对话中误触发中断。
 
 ---
 
@@ -613,7 +557,7 @@ octos-core 在 2026 年下半年又收进了七个模块。表面上看 core 变
 > - 跨 crate 共享的逻辑需要放在其他地方（比如 octos-agent 中的工具函数）
 > - 可能出现"本应在 core 中"的类型被定义在上层 crate 的情况
 >
-> **octos 的选择：瘦 core，理由如下。**
+> octos 的选择：瘦 core，理由如下。
 >
 > octos-core 的外部依赖仅限于 `serde`、`serde_json`、`chrono`、`uuid`、`eyre`、`tracing`、`sha2` 这几个基础库，分别覆盖序列化、时间、错误处理、结构化日志与哈希，均为行业标准。这意味着 octos-core 的编译时间极短，而所有依赖它的 crate（octos-llm、octos-memory、octos-agent、octos-bus、octos-pipeline、octos-cli）都能从这个快速编译中获益。
 >
@@ -625,18 +569,18 @@ octos-core 在 2026 年下半年又收进了七个模块。表面上看 core 变
 
 octos-core 用 22,313 行 Rust 源文件（剔除 ui_protocol_tests.rs 后约 15,005 行）定义了整个系统的领域语言：
 
-1. **Task 状态机**：用 Rust 枚举编码合法状态和转换，在类型层面消除非法状态组合。UUID v7 提供时间排序，五维 TokenUsage 支持精细的成本追踪。
+1. Task 状态机：用 Rust 枚举编码合法状态和转换，在类型层面消除非法状态组合。UUID v7 提供时间排序，五维 TokenUsage 支持精细的成本追踪。
 
-2. **Message 抽象**：四角色统一模型（System/User/Assistant/Tool）+ `as_str()`/`Display` 双重实现，确保跨 Provider 的序列化一致性。`ClientMessageId`、`ThreadId`、`TurnId` 则把 UI 乐观消息、渲染分组和协议 turn identity 分开，避免并发 turn 下的错误归属。
+2. Message 抽象：四角色统一模型（System/User/Assistant/Tool）+ `as_str()`/`Display` 双重实现，确保跨 Provider 的序列化一致性。`ClientMessageId`、`ThreadId`、`TurnId` 则把 UI 乐观消息、渲染分组和协议 turn identity 分开，避免并发 turn 下的错误归属。
 
-3. **Durable ABI**：`TaskResult.schema_version` 和 `SessionSummary.schema_version` 让 task result 与 typed compaction summary 成为可升级的 wire-stable payload；未来版本通过 typed error fail closed。
+3. Durable ABI：`TaskResult.schema_version` 和 `SessionSummary.schema_version` 让 task result 与 typed compaction summary 成为可升级的 wire-stable payload；未来版本通过 typed error fail closed。
 
-4. **Error 设计**：选择 eyre/color-eyre 获取彩色错误报告和 SpanTrace 支持。三层结构（kind + context + suggestion）让错误消息可操作。
+4. Error 设计：选择 eyre/color-eyre 获取彩色错误报告和 SpanTrace 支持。三层结构（kind + context + suggestion）让错误消息可操作。
 
-5. **UTF-8 安全工具**：`truncate_utf8` 的两个变体（in-place 和 copying）通过 `is_char_boundary()` 保证截断安全。`truncate_head_tail_report` 返回结构化 `TruncationReport`，`truncate_head_tail` 是其字节一致的薄包装。
+5. UTF-8 安全工具：`truncate_utf8` 的两个变体（in-place 和 copying）通过 `is_char_boundary()` 保证截断安全。`truncate_head_tail_report` 返回结构化 `TruncationReport`，`truncate_head_tail` 是其字节一致的薄包装。
 
-6. **零依赖设计**：瘦 core 策略确保类型基础稳定、编译快速，支撑上层 crate 的独立演进。
-7. **core 的边界**：2026 年新增的七个模块（abort、app_ui、app_ui_codec、env_hygiene、gateway、git_worktree、session_scope）按"跨上层的单一事实源"判据归入 core。
+6. 零依赖设计：瘦 core 策略确保类型基础稳定、编译快速，支撑上层 crate 的独立演进。
+7. core 的边界：2026 年新增的七个模块（abort、app_ui、app_ui_codec、env_hygiene、gateway、git_worktree、session_scope）按"跨上层的单一事实源"判据归入 core。
 
 下一章，我们将进入 octos-llm，看看这些核心类型如何被用来驯服多个 LLM Provider 的混乱接口。
 
@@ -644,21 +588,21 @@ octos-core 用 22,313 行 Rust 源文件（剔除 ui_protocol_tests.rs 后约 15
 
 ## 延伸阅读
 
-- **Rust 枚举与模式匹配**：*The Rust Programming Language* 第 6 章 "Enums and Pattern Matching"，https://doc.rust-lang.org/book/ch06-00-enums.html
-- **eyre 错误处理**：eyre crate 文档，https://docs.rs/eyre/latest/eyre/
-- **color-eyre**：color-eyre crate 文档，https://docs.rs/color-eyre/latest/color_eyre/
-- **UUID v7 规范**：RFC 9562 "Universally Unique IDentifiers (UUIDs)"，Section 5.7
-- **UTF-8 编码**：*The Unicode Standard* Chapter 3 "Conformance"：理解 UTF-8 变长编码对安全截断至关重要
+- Rust 枚举与模式匹配：*The Rust Programming Language* 第 6 章 "Enums and Pattern Matching"，https://doc.rust-lang.org/book/ch06-00-enums.html
+- eyre 错误处理：eyre crate 文档，https://docs.rs/eyre/latest/eyre/
+- color-eyre：color-eyre crate 文档，https://docs.rs/color-eyre/latest/color_eyre/
+- UUID v7 规范：RFC 9562 "Universally Unique IDentifiers (UUIDs)"，Section 5.7
+- UTF-8 编码：*The Unicode Standard* Chapter 3 "Conformance"：理解 UTF-8 变长编码对安全截断至关重要
 
 ## 思考题
 
-1. **状态机扩展**：如果要为 Task 添加一个 `Cancelled` 状态（用户主动取消），它应该从哪些状态可达？添加这个状态会对现有的 `match` 表达式产生什么影响？
+1. 状态机扩展：如果要为 Task 添加一个 `Cancelled` 状态（用户主动取消），它应该从哪些状态可达？添加这个状态会对现有的 `match` 表达式产生什么影响？
 
-2. **胖 core vs 瘦 core**：假设 octos-core 把 `LlmProvider` trait 也放进来（因为所有上层 crate 都需要它），会带来什么问题？提示：考虑 `async-trait`、`reqwest` 等依赖的传递效应。
+2. 胖 core vs 瘦 core：假设 octos-core 把 `LlmProvider` trait 也放进来（因为所有上层 crate 都需要它），会带来什么问题？提示：考虑 `async-trait`、`reqwest` 等依赖的传递效应。
 
-3. **错误设计权衡**：octos 的 `ErrorKind` 有 15 个变体。如果系统继续增长到 50 个变体，这种设计会遇到什么问题？你会如何重构？
+3. 错误设计权衡：octos 的 `ErrorKind` 有 15 个变体。如果系统继续增长到 50 个变体，这种设计会遇到什么问题？你会如何重构？
 
-4. **截断策略的替代方案**：`truncate_utf8` 按字节截断并回退到字符边界。另一种方案是按 Unicode 字素簇（grapheme cluster）截断。两种方案在处理 emoji 组合序列（如 👨‍👩‍👧‍👦）时有什么区别？哪种更适合 LLM 上下文管理场景？
+4. 截断策略的替代方案：`truncate_utf8` 按字节截断并回退到字符边界。另一种方案是按 Unicode 字素簇（grapheme cluster）截断。两种方案在处理 emoji 组合序列（如 👨‍👩‍👧‍👦）时有什么区别？哪种更适合 LLM 上下文管理场景？
 
 ---
 
