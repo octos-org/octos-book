@@ -10,8 +10,8 @@
 ## 1. tools/ 目录总览
 
 - 源文件数: `ls crates/octos-agent/src/tools/ | grep -v test | wc -l` → **58 个条目**(57 个 .rs + admin/ 子目录)
-  - 注:黑板第 9 条写「59 个源文件」,口径为 `ls crates/octos-agent/src/tools/*.rs | wc -l`(含 test 类与 mod.rs 计满 59);本表以 58 条目 + admin 子目录 6 文件为结构口径,写作时统一注明。
-- admin/ 子目录(6 文件): mod.rs platform_skills.rs profiles.rs skills.rs sub_accounts.rs system.rs update.rs
+  - 注:黑板第 9 条写「59 个源文件」,口径为 `ls crates/octos-agent/src/tools/*.rs | wc -l`(含 test 类与 mod.rs 计满 59);本表以 58 条目 + admin 子目录 7 文件为结构口径,写作时统一注明。
+- admin/ 子目录(7 文件): mod.rs platform_skills.rs profiles.rs skills.rs sub_accounts.rs system.rs update.rs
 - 骨架三件: registry.rs **3,581 行**、policy.rs **741 行**、args.rs **479 行**
 
 ## 2. 能力域分组(按文件名与职责初步归属,供 writer 重组叙事)
@@ -27,7 +27,7 @@
 | 代码/结构 | code_structure, coding_tools |
 | Git | git |
 | 技能/插件 | manage_skills, dora_bridge, mcp_agent |
-| 平台杂项 | check_workspace_contract, tool_config, mofa_make, robot_groups, mod, admin/(6 文件) |
+| 平台杂项 | check_workspace_contract, tool_config, mofa_make, robot_groups, mod, admin/(7 文件) |
 
 ## 3. 骨架符号(行号实测)
 

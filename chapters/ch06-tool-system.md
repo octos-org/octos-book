@@ -4,7 +4,7 @@
 
 Agent 的"智能"来自 LLM,但 Agent 的"能力"来自工具。没有工具,Agent 只能生成文本;有了工具,Agent 可以读写文件、执行命令、搜索网页、管理 Git 仓库、派出子代理。
 
-先统一口径。以 `ls crates/octos-agent/src/tools/ | grep -v test` 实测,tools/ 下共 **58 个条目**:57 个 `.rs` 文件加一个 `admin/` 子目录(内含 6 个文件,合计 3,424 行)。黑板与早期规划里出现的"59 个源文件"是把测试类文件与 `mod.rs` 计满后的口径(`ls crates/octos-agent/src/tools/*.rs | wc -l`)。本章统一采用"58 条目 + admin 子目录 6 文件"的结构口径,不再沿用旧稿那个早已失效的固定工具数:当前源码里本来就不存在一个稳定的"总工具数":同一批源文件在不同构造路径下注册出不同的工具面,理解这个分层注册模型,比记住一个固定数字更重要。
+先统一口径。以 `ls crates/octos-agent/src/tools/ | grep -v test` 实测,tools/ 下共 **58 个条目**:57 个 `.rs` 文件加一个 `admin/` 子目录(内含 7 个文件,合计 3,424 行)。黑板与早期规划里出现的"59 个源文件"是把测试类文件与 `mod.rs` 计满后的口径(`ls crates/octos-agent/src/tools/*.rs | wc -l`)。本章统一采用"58 条目 + admin 子目录 7 文件"的结构口径,不再沿用旧稿那个早已失效的固定工具数:当前源码里本来就不存在一个稳定的"总工具数":同一批源文件在不同构造路径下注册出不同的工具面,理解这个分层注册模型,比记住一个固定数字更重要。
 
 工具带来能力的同时也带来风险:每个工具调用都是一个潜在的攻击面。octos 的答案是一道骨架三防线:`ToolPolicy` 控制哪些工具可用(deny-wins),参数验证控制输入安全(1 MB 上限与结构化报错),symlink-safe I/O 与 SSRF 校验控制文件系统与网络边界。第 7 章会展开沙箱与 `write_grant` 的运行时语义,本章只讲工具侧的接口与注册。
 
@@ -25,7 +25,9 @@ Agent 的"智能"来自 LLM,但 Agent 的"能力"来自工具。没有工具,Age
 | 代码/结构 | 2 | code_structure, coding_tools |
 | Git | 1 | git |
 | 技能/插件 | 3 | manage_skills, dora_bridge, mcp_agent |
-| 平台杂项 | 9 | check_workspace_contract, tool_config, mofa_make, robot_groups, mod, admin/(6 文件) |
+| 平台杂项 | 6 | check_workspace_contract, tool_config, mofa_make, robot_groups, mod, admin/(7 文件) |
+
+表的合计口径:58 个条目 = 上表 10 域的 55 个文件级条目(平台杂项按实际清单 6 条,`admin/` 整体算 1 条)+ 不归属任何域的骨架三件(`registry`、`policy`、`args`)。
 
 图 6-1 能力域工具家族(mermaid,正文渲染):
 
@@ -88,7 +90,7 @@ graph LR
 
 ### 6.1.5 消息/交互(4 个)
 
-`message` 发文本、`send_file` 发文件、`send_app_card` 发卡片、`ask_user_question` 向用户提问。这一域的特点是"结果不是给模型的,是给人的":输出走消息总线而非工具结果,第 10 章展开。
+`message` 发文本、`send_file` 发文件、`send_app_card` 发卡片、`ask_user_question` 向用户提问。这一域的特点是"结果不是给模型的,是给人的":输出走消息总线而非工具结果(`MessageTool`/`SendAppCardTool` 共享同一个 `tx` 通道注册,`crates/octos-agent/src/tools/registry.rs:1735-1736`;`send_app_card` 的描述里明确要求 `initial_state` 必须来自真实工具数据、严禁编造,`crates/octos-agent/src/tools/send_app_card.rs:130-140`),第 10 章展开。
 
 ### 6.1.6 Peer/Fleet(10 个)
 
@@ -100,7 +102,7 @@ graph LR
 
 ### 6.1.8 技能/插件(3 个)与平台杂项
 
-`manage_skills` 管理技能包,`dora_bridge` 接机器人框架(工具名来自映射表,`crates/octos-agent/src/tools/dora_bridge.rs:178`),`mcp_agent` 让 spawn 能把任务派给任何 MCP 后端(`crates/octos-agent/src/tools/mcp_agent.rs:1-6`)。平台杂项里 `tool_config.rs` 注册名是 `configure_tool`(`crates/octos-agent/src/tools/tool_config.rs:633`),`mofa_make` 是分发器(其目标工具被 `mark_internal_hidden` 隐藏,6.3 节),`robot_groups.rs` 维护机器人安全分级(`SafetyTier`,如 `camera_read` 是 Observe、`slow_move` 是 SafeMotion,`crates/octos-agent/src/tools/robot_groups.rs:186-187`),`admin/` 子目录 6 文件提供 20 个 `admin_*` 运维工具(`admin_list_profiles`、`admin_system_health`、`admin_update_octos` 等)。
+`manage_skills` 管理技能包,`dora_bridge` 接机器人框架(工具名来自映射表,`crates/octos-agent/src/tools/dora_bridge.rs:178`),`mcp_agent` 让 spawn 能把任务派给任何 MCP 后端(`crates/octos-agent/src/tools/mcp_agent.rs:1-6`)。平台杂项里 `tool_config.rs` 注册名是 `configure_tool`(`crates/octos-agent/src/tools/tool_config.rs:633`),`mofa_make` 是分发器(其目标工具被 `mark_internal_hidden` 隐藏,6.3 节),`robot_groups.rs` 维护机器人安全分级(`SafetyTier`:工具在 `RobotToolRegistry` 里按最低所需档位注册,档位展开时低档自动包含高档工具,`crates/octos-agent/src/tools/robot_groups.rs:26-38、51-59`),`admin/` 子目录 7 文件提供 20 个 `admin_*` 运维工具(`admin_list_profiles`、`admin_system_health`、`admin_update_octos` 等)。
 
 ### 为什么按域拆文件,而不是一个大文件
 
