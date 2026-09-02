@@ -110,7 +110,9 @@ pub fn admits(&self, projected: u64) -> bool {
 
 溢出的和不可能是合法预算,直接拒绝;饱和算术会把 `MAX + MAX + 1 <= MAX` 静默判为放行(P2-5 修复)。v1 的 `hard = false` 是软准入:拒绝的是下一次启动,不打断在飞运行。
 
-outbox 解决「状态变了要通知谁」。`append_event`(store.rs:2518)在各转移自己的写事务内追加(store.rs:2806 注释),事件类型四种:`ChildLaunching`、`ChildRunning`、`ChildDone`、`FleetDrained`。消费协议是真实的 claim/ack:`claim_next`(store.rs:2547)领取最低序号未确认事件,盖 `claimed_by`、新铸 `claim_token`、设 `claim_expires_at`;`ack`(store.rs:2603)必须出示匹配的 `(claimed_by, claim_token)`,不匹配返回 `StaleClaim`。这个令牌围栏(P1-3)挡住一种具体竞态:消费者的租约已过期、事件已被别人重领,旧消费者迟到的 ack 不会污染新消费者的进度。消费侧是 `crates/octos-cli/src/autonomy/fleet_wake.rs`(1,807 行)的 outbox 消费循环,它把 `ChildDone` / `FleetDrained` 变成 keeper 的续跑唤醒,且只在唤醒持久化后才 ack;未持久化的唤醒留在 claimed 状态,租约到期后自动重投。这套唤醒骑的是第 12 章的 MasterContinuationScheduler,调度细节详见第 12 章,keeper 语义详见第 18 章。
+outbox 解决「状态变了要通知谁」。`append_event`(store.rs:2518)在各转移自己的写事务内追加(store.rs:2806 注释),事件类型四种:`ChildLaunching`、`ChildRunning`、`ChildDone`、`FleetDrained`。消费协议是真实的 claim/ack:`claim_next`(store.rs:2547)领取最低序号未确认事件,盖 `claimed_by`、新铸 `claim_token`、设 `claim_expires_at`;`ack`(store.rs:2603)必须出示匹配的 `(claimed_by, claim_token)`,不匹配返回 `StaleClaim`。这个令牌围栏(P1-3)挡住一种具体竞态:消费者的租约已过期、事件已被别人重领,旧消费者迟到的 ack 不会污染新消费者的进度。这套唤醒骑的是第 12 章的 MasterContinuationScheduler,调度细节详见第 12 章,keeper 语义详见第 18 章。
+
+消费侧值得单独走一遍,因为它把 outbox 的持久语义补成了完整一环。`crates/octos-cli/src/autonomy/fleet_wake.rs`(1,807 行)的 `drain_fleet_outbox_once`(:235)是可测试的核心:吃 store、时钟、批量上限与一个 `commit_wake` 回调,循环 `claim_next` 直到领空或达批量。ack 的门槛是一个两值枚举 `WakeCommit`(:70):唤醒持久化为 `Durable`,可以 ack;只在内存里或持久化失败为 `NotDurable`,不 ack,事件留在 claimed 状态,租约(30 秒,:56)到期自动重投。唤醒永不静默丢失,代价是最多重投一次。消费循环 `spawn_fleet_outbox_consumer`(:343)每 3 秒一 tick,单 tick 上限 64 条(:63),防止积压的 outbox 独占消费者或堆出无限续跑队列,余量留给下一 tick。三个特殊分支各自有编号:#1973 修复轮规定已取消 fleet 的 `ChildDone` 直接 ack 不唤醒(goal 已清,唤醒会用陈旧元数据复活一个死控制器;Complete / Failed 的迟到事件仍唤醒,keeper 借此自检完成);fleet 行消失也直接 ack,不让 outbox 卡在缺失记录上;非终态生命周期事件不含唤醒语义,领了就 ack。唤醒内容不是事件裸转发:`render_fleet_snapshot`(:99)先异步读计划与就绪集,渲染成 `FleetKeeperSnapshot`(:84,objective、每任务一行、就绪 id 列表),同步的提示渲染器只做格式化不再碰 I/O。fleet 侧的结论是:outbox 保证事件必达,消费环保证唤醒必持久,两层各管一段崩溃窗口。
 
 一次 attempt 从启动到落账的完整时序:
 
@@ -173,7 +175,9 @@ stateDiagram-v2
 
 恢复协调是 `reconcile`(store.rs:2191,报告类型 `ReconcileReport` 在 :160)。启动时以当前 `owner_epoch` 与时钟扫描所有 Launching / Running 的 child:活 fleet 的 attempt 只在租约失效(外来 `owner_epoch` 或 `expires_at_ms` 已过)时回收;终态 fleet 的在飞 attempt 无条件结算(#1973 修复轮:此前 Cancelled 的 fleet 被整体跳过,attempt 与预算预留被永久钉死)。回收动作是一个事务三件事:attempt 记 `Interrupted`、从 fleet 预算释放该 attempt 的预留(`checked_sub`,下溢即账务不变量破坏,直接报错)、child 清空 `current_attempt_id`。活 fleet 的 child 回到 Ready 等待本次启动重发;终态 fleet 的 child 记 Cancelled,永不复活(P2-7)。旧 attempt 永远不复活,重跑一律开新 attempt。
 
-计划修订走 revision CAS:`replan`(store.rs:1512)带 `expected_revision`,递增 revision 并把任务的声明依赖同步到 child 行的反规范化副本;`retitle_task`(:1804)与 `set_task_grant`(:1898)同型。决策日志(`append_decision`:2648、`list_decisions`:2697)按序号追加,`DecisionKind` 是内核发出的封闭集合,与 `Finding` 的开放 `kind` 字符串(records.rs:447,一条可证伪的声明,component 字段做聚类键,供 digest.rs 的有界摘要读取)形成对照:内核决策封闭,探索发现开放。
+计划修订走 revision CAS:`replan`(store.rs:1512)带 `expected_revision`,递增 revision 并把任务的声明依赖同步到 child 行的反规范化副本;`retitle_task`(:1804)与 `set_task_grant`(:1898)同型。决策日志(`append_decision`:2648、`list_decisions`:2697)按序号追加,`DecisionKind` 是内核发出的封闭集合,与 `Finding` 的开放 `kind` 字符串(records.rs:447,一条可证伪的声明,component 字段做聚类键)形成对照:内核决策封闭,探索发现开放。
+
+恢复之后还有第二个问题:重启的 keeper 凭什么了解「之前发生了什么」。读全部 worker 的转录既不可行也无意义,`digest.rs`(861 行)就是为此存在的有界读侧。它的首页文档把失败模式说得很直白:goal 的瓶颈不是缺执行器,是控制器的上下文窗口成为问题复杂度的上限,若综合进度意味着读完每个 worker 的产出,架构师就退化成在 worker 之间传话的办事员。所以控制器从不直接读 finding,只读 `digest(findings, opts)`(digest.rs:175)的产物,一个体积不随项目增长的视图。纯函数设计:不吃 store、不吃 LLM、不吃时钟,水位线(`since_seq`,控制器已综合到的最大序号)、当前配置、字符预算全部是输入,整份逻辑可以表驱动测试。预算即设计:`max_chars` 默认 4,000(digest.rs:52),超限按节丢弃并如实声明(`Dropped` 结构 digest.rs:126 记录哪节丢了多少条),静默截断会读成「没有更多可看」,比显式砍列表更糟。每节排序最新在前,预算从尾部砍,该牺牲的是最旧的。产出五个分区:新 finding、翻案(overturn)、过期(finding 的 config 与当前构建漂移,`drift` 函数 digest.rs:156 比对)、聚类提示(component 被多少条路径引用,`cluster_min_paths` 默认 2)与按路径成本,外加返回给控制器作下一轮 `since_seq` 的水位线。digest 在恢复协调里的位置由此确定:reconcile 把账本状态修回自洽,digest 保证修完之后控制器以恒定成本重新进入。
 
 ## 16.5 worker 装配:封闭注册表与常开安全阀
 
@@ -205,7 +209,11 @@ pub enum AttemptOutcome {
 
 ## 16.7 Fleet 表层与边界
 
-`fleet.rs`(3,062 行)的 `Fleet`(:190)在 store 之上组合 CAS 操作成整计划 API:`create`(:210)、`bind`(:300)、`view`(:324)、`ready_tasks`(:375)、`apply_edit`(:402)、`record_outcome`(:542)、`is_complete`(:583)、`summary`(:595)。它不改变 store 语义,是未来 keeper 与 `goal_get` / `goal_update` 工具编程的表层。`sqlite_ledger.rs`(6,360 行)的 `GoalLedger`(:13)是另一份持久账本,服务 goal keeper 的目标、任务、发现与升级记录,属于第 18 章的主题;fleet 内核的六张 redb 表与它分工,互不替代。swarm 的扇出拓扑详见第 17 章;supervisor 的事件账本与唤醒调度详见第 12 章;WorkerGrant 的完整权限模型详见第 7 章。
+`fleet.rs`(3,062 行)的 `Fleet`(:190)在 store 之上组合 CAS 操作成整计划 API:`create`(:210)、`bind`(:300)、`view`(:324)、`ready_tasks`(:375)、`apply_edit`(:402)、`record_outcome`(:542)、`is_complete`(:583)、`summary`(:595)。它不改变 store 语义,是未来 keeper 与 `goal_get` / `goal_update` 工具编程的表层。
+
+crate 里最大的文件不是 store,是 `sqlite_ledger.rs`(6,360 行,占两 crate 合计 23,730 行的四分之一强),`GoalLedger`(:13)落地于此。为什么一份代码里同时有 redb 和 sqlite?文件头三行注释给出理由:redb 是单写者单进程模型,SQLite 经 WAL 支持多进程访问,适合 master 与各 peer 作为独立进程共享同一份账本的 peer 架构。两个持久层的分工按访问者切:fleet 内核的六张表(fleet、child、attempt、plan、decision、outbox)由单一 serve 进程独占写,单写事务的 CAS 形状与 redb 的模型严丝合缝;goal 账本(goals、tasks、findings、escalations 表,findings 表带 goal 与 task 双索引,sqlite_ledger.rs:409-410)要被 keeper、worker 与 transition sync 多方读写,SQL 的行级内容寻址(`append_finding`:1623、`list_findings_since`:2132)与索引查询是更自然的形状。`sqlite_ledger.rs:13` 的 GoalLedger 属于第 18 章的主题,这里只留一个工程细节:并发打开同一份新 WAL 库有毫秒级初始化竞态(`database is locked`,busy handler 不覆盖),`open`(:222)用 rusqlite 默认 5 秒 busy_timeout,goal 状态迁移专用的 `open_with_busy_retry`(:245)才做 3 次有界重试并把超时压到 1 秒,这条路径只在阻塞线程上跑。ledger 与 store 互不替代:一个管多进程共享的 goal 账本,一个管单进程独占的执行状态机。
+
+swarm 的扇出拓扑详见第 17 章;supervisor 的事件账本与唤醒调度详见第 12 章;WorkerGrant 的完整权限模型详见第 7 章。
 
 ## 16.8 本章回顾
 
