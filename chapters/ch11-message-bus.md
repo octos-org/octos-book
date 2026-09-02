@@ -257,7 +257,7 @@ flowchart TD
     Observer --> UI["UI Protocol message/persisted"]
 ```
 
-observer 失败或 panic 不会回滚消息，因为 durable commit 已经完成；它只是 best-effort fan-out（`../octos/crates/octos-bus/src/session.rs:71-89`）。这条边界能避免一个常见错误：不要把 `message/persisted` 理解成“准备写入”，它表示“这一行已经 durable visible”。`octos-cli` 的 UI Protocol 测试也锁定了这个顺序和去重行为（`../octos/crates/octos-cli/src/api/ui_protocol_ledger.rs` 等 `ui_protocol_{transport,ledger,progress,task_output,reasoning_effort,alpha2_bridge,alpha9_bridge}.rs` 拆分文件家族（legacy `message/persisted` 记账在 `ui_protocol_ledger.rs:294-330`，恢复期跳过在 `1269-1423`））。
+observer 失败或 panic 不会回滚消息，因为 durable commit 已经完成；它只是 best-effort fan-out（`../octos/crates/octos-bus/src/session.rs:71-89`）。这条边界能避免一个常见错误：不要把 `message/persisted` 理解成“准备写入”，它表示“这一行已经 durable visible”。`octos-cli` 的 UI Protocol 测试也锁定了这个顺序和去重行为（`../octos/crates/octos-cli/src/api/ui_protocol_ledger.rs` 等 `ui_protocol_{transport,ledger,progress,task_output,reasoning_effort,alpha2_bridge,alpha9_bridge}.rs` 拆分文件家族（legacy `message/persisted` 记账在 `crates/octos-cli/src/api/ui_protocol_ledger.rs:294-330`，恢复期跳过在 `1269-1423`））。
 
 ### 11.3.7 child-session contract：后台子任务不是只靠消息文本追踪
 
@@ -328,18 +328,18 @@ pub fn split_message(text: &str, config: &ChunkConfig) -> Vec<String> {
 
 ##### 窗口语义:先裁剪、再寻点
 
-切割循环里最容易被忽略的是「窗口」这一步。`split_message()` 不是在整个剩余文本上找断点，而是先构造 `search = &remaining[..limit]` 这个不超过 `max_chars` 的搜索窗口，`find_break_point()` 只在这个窗口内做 `rfind()`（`../octos/crates/octos-bus/src/coalesce.rs:72-73`）。两层职责由此分开：窗口负责编码安全（`is_char_boundary()` 回退，coalesce.rs:68-71），断点函数负责语义自然（`
+切割循环里最容易被忽略的是「窗口」这一步。`split_message()` 不是在整个剩余文本上找断点，而是先构造 `search = &remaining[..limit]` 这个不超过 `max_chars` 的搜索窗口，`find_break_point()` 只在这个窗口内做 `rfind()`（`../octos/crates/octos-bus/src/coalesce.rs:72-73`）。两层职责由此分开：窗口负责编码安全（`is_char_boundary()` 回退，crates/octos-bus/src/coalesce.rs:68-71），断点函数负责语义自然（`
 
 ` → `
-` → `. ` → 空格 → 硬切，coalesce.rs:87-118）。如果把两者混在一个函数里，每个候选断点都要重复做边界检查，而且很容易在「恰好卡在上限」的路径上漏掉一次。
+` → `. ` → 空格 → 硬切，crates/octos-bus/src/coalesce.rs:87-118）。如果把两者混在一个函数里，每个候选断点都要重复做边界检查，而且很容易在「恰好卡在上限」的路径上漏掉一次。
 
-另一个细节是 `find_break_point()` 对位置 0 的拒绝：`rfind` 找到的断点若等于 0 会被跳过，继续尝试下一级边界（coalesce.rs:97-109）。这保证了向前推进：如果段落边界恰好是文本开头，切一刀切出空块，循环会永远停在原点。
+另一个细节是 `find_break_point()` 对位置 0 的拒绝：`rfind` 找到的断点若等于 0 会被跳过，继续尝试下一级边界（crates/octos-bus/src/coalesce.rs:97-109）。这保证了向前推进：如果段落边界恰好是文本开头，切一刀切出空块，循环会永远停在原点。
 
-切割之后的清洗也值得单独看：`trim_end()` 只作用于块尾，`trim_start_matches('\n')` 吃掉交界处累积的换行，然后「最多跳过一个前导空格、但两个空格不动」（coalesce.rs:76-78）。两个空格在 Markdown 里意味着硬换行，跳过它会改变渲染语义；只跳一个空格是在「块间视觉干净」和「不破坏格式」之间取的折中。
+切割之后的清洗也值得单独看：`trim_end()` 只作用于块尾，`trim_start_matches('\n')` 吃掉交界处累积的换行，然后「最多跳过一个前导空格、但两个空格不动」（crates/octos-bus/src/coalesce.rs:76-78）。两个空格在 Markdown 里意味着硬换行，跳过它会改变渲染语义；只跳一个空格是在「块间视觉干净」和「不破坏格式」之间取的折中。
 
 ##### 去重与 Coalescing 的关系
 
-Coalescing 解决「一条太长」，去重解决「一条收到两次」。Webhook 类平台（飞书、Twilio、企业微信）在超时重试时可能投递同一事件多次，`MessageDedup` 用容量 1,000、TTL 60 秒的 LRU 缓存记录已见过的消息 ID（`../octos/crates/octos-bus/src/dedup.rs:12-25`；`is_duplicate` 在 42-61 行）。Discord 网关重连后重放事件，也在 `discord_channel.rs:32` 挂了同一个实例。两个机制正交：去重发生在 inbound 入口，切割发生在 outbound 出口，各管一段。入口不去重，一条重复消息会被切割成两倍量的块；出口不切割，任何一条超限消息直接被平台 API 拒收。
+Coalescing 解决「一条太长」，去重解决「一条收到两次」。Webhook 类平台（飞书、Twilio、企业微信）在超时重试时可能投递同一事件多次，`MessageDedup` 用容量 1,000、TTL 60 秒的 LRU 缓存记录已见过的消息 ID（`../octos/crates/octos-bus/src/dedup.rs:12-25`；`is_duplicate` 在 42-61 行）。Discord 网关重连后重放事件，也在 `crates/octos-bus/src/discord_channel.rs:32` 挂了同一个实例。两个机制正交：去重发生在 inbound 入口，切割发生在 outbound 出口，各管一段。入口不去重，一条重复消息会被切割成两倍量的块；出口不切割，任何一条超限消息直接被平台 API 拒收。
 
 ### 11.4.1 Unicode 安全的边界检测
 
@@ -385,15 +385,15 @@ octos-bus 通过 feature flags 按需编译各频道实现。每个频道实现 
 
 表中较晚接入的四个频道值得各花一段说清定位。
 
-**DingTalk**（dingtalk_channel.rs，544 行）走「自定义机器人发送 + outgoing-robot webhook 接收」的双通道模式。关键在 `sessionWebhook`：outgoing 事件里携带一个短期有效的会话级 webhook URL，频道按会话缓存它，回复优先发往这个缓存地址而不是全局配置的 webhook（dingtalk_channel.rs:281、发送优先级判定 188-199；无缓存且无配置时报错于 196 行）。这样设计是因为钉钉的 outgoing 模式下，回复必须回到「发起这次对话的那个机器人会话」，全局地址做不到这一点，而短期 URL 又要求缓存失效后能回退。
+**DingTalk**（crates/octos-bus/src/dingtalk_channel.rs，544 行）走「自定义机器人发送 + outgoing-robot webhook 接收」的双通道模式。关键在 `sessionWebhook`：outgoing 事件里携带一个短期有效的会话级 webhook URL，频道按会话缓存它，回复优先发往这个缓存地址而不是全局配置的 webhook（crates/octos-bus/src/dingtalk_channel.rs:281、发送优先级判定 188-199；无缓存且无配置时报错于 196 行）。这样设计是因为钉钉的 outgoing 模式下，回复必须回到「发起这次对话的那个机器人会话」，全局地址做不到这一点，而短期 URL 又要求缓存失效后能回退。
 
-**LINE**（line_channel.rs，826 行）是标准的 webhook + Messaging API 组合，安全链路在签名校验：对原始请求体做 HMAC-SHA256，Base64 后与 `X-Line-Signature` 头做常数时间比较（line_channel.rs:87-95，`ct_eq` 来自 subtle crate）。用常数时间比较而不是 `==`，是防时序侧信道逐字节猜签名；用原始 body 而不是反序列化后的字符串，是防 JSON 规整化差异导致验签失败。这两个选择都是平台集成里反复踩坑后的标准答案。
+**LINE**（crates/octos-bus/src/line_channel.rs，826 行）是标准的 webhook + Messaging API 组合，安全链路在签名校验：对原始请求体做 HMAC-SHA256，Base64 后与 `X-Line-Signature` 头做常数时间比较（crates/octos-bus/src/line_channel.rs:87-95，`ct_eq` 来自 subtle crate）。用常数时间比较而不是 `==`，是防时序侧信道逐字节猜签名；用原始 body 而不是反序列化后的字符串，是防 JSON 规整化差异导致验签失败。这两个选择都是平台集成里反复踩坑后的标准答案。
 
-**Matrix User**（matrix_user_channel.rs，1,525 行）与第 11.5 节表格里的 Matrix 行是同一平台的两种接入形态。AppService 模式需要 homeserver 侧注册，用户账号模式只需要 access token 或密码登录，然后对 Client-Server `/sync` API 做长轮询，超时 30 秒（matrix_user_channel.rs:44 的 `SYNC_TIMEOUT_MS`）。长轮询让没有推送权限的自建服务器也能近实时收消息：请求挂着，有事件才返回，返回后立刻发下一个。它没有独立的 Cargo feature，随 `matrix` 一起编译，因为两者共享 Markdown-to-HTML 渲染和路径编码等基础设施。
+**Matrix User**（crates/octos-bus/src/matrix_user_channel.rs，1,525 行）与第 11.5 节表格里的 Matrix 行是同一平台的两种接入形态。AppService 模式需要 homeserver 侧注册，用户账号模式只需要 access token 或密码登录，然后对 Client-Server `/sync` API 做长轮询，超时 30 秒（crates/octos-bus/src/matrix_user_channel.rs:44 的 `SYNC_TIMEOUT_MS`）。长轮询让没有推送权限的自建服务器也能近实时收消息：请求挂着，有事件才返回，返回后立刻发下一个。它没有独立的 Cargo feature，随 `matrix` 一起编译，因为两者共享 Markdown-to-HTML 渲染和路径编码等基础设施。
 
-**CLI**（cli_channel.rs，137 行）是最小实现样本：stdin 按行读、stdout 写提示符（cli_channel.rs:52-57），没有网络栈、没有鉴权、没有 feature 门控，始终编译。它存在的意义是让 `Channel` trait 的最小契约可验证：一个频道只需实现 `name()`、`start()`、`send()` 三个方法就能跑通全链路，也是新频道开发时最便宜的参照物。
+**CLI**（crates/octos-bus/src/cli_channel.rs，137 行）是最小实现样本：stdin 按行读、stdout 写提示符（crates/octos-bus/src/cli_channel.rs:52-57），没有网络栈、没有鉴权、没有 feature 门控，始终编译。它存在的意义是让 `Channel` trait 的最小契约可验证：一个频道只需实现 `name()`、`start()`、`send()` 三个方法就能跑通全链路，也是新频道开发时最便宜的参照物。
 
-每个频道实现都是独立的——Telegram 频道的 bug 不会影响 Discord，因为它们是不同的代码路径，通过不同的 feature flag 编译。需要注意的是，`octos chat` 的 CLI readline 不在 `octos-bus` 的 Cargo feature 频道列表中；bus 侧 feature-gated 频道当前为 `api`、`telegram`、`discord`、`slack`、`whatsapp`、`email`、`feishu`、`dingtalk`、`line`、`twilio`、`wecom`、`matrix`、`wecom-bot`、`qq-bot`、`wechat` 共 15 个，其中 `dingtalk_channel.rs` 与 `line_channel.rs` 是较新的接入；`matrix_user_channel.rs` 没有独立 feature，随 `matrix` 一起编译；`cli_channel.rs` 始终编译，三类合计 17 个频道源文件。这种隔离设计是 octos-bus 约 40K 行 Rust 源文件中大部分来自各频道独立实现的原因。
+每个频道实现都是独立的——Telegram 频道的 bug 不会影响 Discord，因为它们是不同的代码路径，通过不同的 feature flag 编译。需要注意的是，`octos chat` 的 CLI readline 不在 `octos-bus` 的 Cargo feature 频道列表中；bus 侧 feature-gated 频道当前为 `api`、`telegram`、`discord`、`slack`、`whatsapp`、`email`、`feishu`、`dingtalk`、`line`、`twilio`、`wecom`、`matrix`、`wecom-bot`、`qq-bot`、`wechat` 共 15 个，其中 `crates/octos-bus/src/dingtalk_channel.rs` 与 `crates/octos-bus/src/line_channel.rs` 是较新的接入；`crates/octos-bus/src/matrix_user_channel.rs` 没有独立 feature，随 `matrix` 一起编译；`crates/octos-bus/src/cli_channel.rs` 始终编译，三类合计 17 个频道源文件。这种隔离设计是 octos-bus 约 40K 行 Rust 源文件中大部分来自各频道独立实现的原因。
 
 ---
 
@@ -487,6 +487,6 @@ fn fnv1a_64(data: &[u8]) -> u64 {
 
 > ### 版本演化说明
 >
-> 本章基线为 octos main @ `9c157101`（2026-09-03 核对）。相对旧稿的“约 30K 行、14 频道”口径：crate 现为约 40K 行（40,937 行，频道文件 18,207 行、共 17 个），新增 DingTalk、LINE 频道与 Matrix User 用户账号模式；`session.rs` 扩至 3,417 行，`SessionHandle` 家族集中在约 2400-3100 行段；`octos-cli` 侧原 `ui_protocol.rs` 已拆分为 transport、ledger 等 7 个文件。本章行号引用以该基线为准。
+> 本章基线为 octos main @ `9c157101`（2026-09-03 核对）。相对旧稿的“约 30K 行、14 频道”口径：crate 现为约 40K 行（40,937 行，频道文件 18,207 行、共 17 个），新增 DingTalk、LINE 频道与 Matrix User 用户账号模式；`crates/octos-bus/src/session.rs` 扩至 3,417 行，`SessionHandle` 家族集中在约 2400-3100 行段；`octos-cli` 侧原 `crates/octos-cli/src/api/ui_protocol.rs` 已拆分为 transport、ledger 等 7 个文件。本章行号引用以该基线为准。
 
-session.rs 的行号漂移不是简单膨胀，而是所有权模型重构的结果。旧稿写作时，读写都汇聚在 `SessionManager` 的大锁上；现在的代码把在线路径拆给 `SessionHandle`（session.rs:2329 起，集中在约 2400-3100 行段），`SessionActor` 每会话持有独立 handle，跨会话零锁竞争（`struct SessionHandle` 上方的 doc 注释写明这一动机）。原 manager 退到两件事上：admin 侧列表查询，以及 `persist_message_through_canonical_path()`（2388 行）这类需要 per-key Tokio mutex 串行化的跨路径写入口（锁表在 2360 行）。文件变长，主要是迁移状态机（2441-2460 行的三种真实情形）和 child-session contract 带来的持久化分支，不是无序生长。
+crates/octos-bus/src/session.rs 的行号漂移不是简单膨胀，而是所有权模型重构的结果。旧稿写作时，读写都汇聚在 `SessionManager` 的大锁上；现在的代码把在线路径拆给 `SessionHandle`（crates/octos-bus/src/session.rs:2329 起，集中在约 2400-3100 行段），`SessionActor` 每会话持有独立 handle，跨会话零锁竞争（`struct SessionHandle` 上方的 doc 注释写明这一动机）。原 manager 退到两件事上：admin 侧列表查询，以及 `persist_message_through_canonical_path()`（2388 行）这类需要 per-key Tokio mutex 串行化的跨路径写入口（锁表在 2360 行）。文件变长，主要是迁移状态机（2441-2460 行的三种真实情形）和 child-session contract 带来的持久化分支，不是无序生长。
