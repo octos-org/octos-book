@@ -58,7 +58,7 @@ flowchart TB
 
 黑板是 OLP 最核心也最容易被误解的机制。必须先说清它是什么:一块每仓库一个的 Markdown 文件(`<repo>/.octos/OUTER_LOOP_REVIEW.md`),Active 区放带编号的审查条目,Historical 区放已 ACK 的历史。它没有 Rust 实现,没有数据库,没有服务进程。追加写 入的唯一正道是 `octoscode/scripts/olp-board-append.sh`(24 行),核心就三行:`exec 9>"$LOCK"`(`:20`)打开锁文件、`flock -x 9`(`:21`)互斥、整条目一次性 `cat >> "$BOARD"`(`:22`)落板,条目正文从 stdin 喂入。flock 保证多外环并发追加不撕裂;一次性 append 保证条目原子可见。
 
-内环侧的对应物是 `.octos/loop.md` 维护循环契约:读黑板 Active 区、取编号最小未 ACK 条目执行到完成、只 commit 不 push、补 `ACK(done|wontdo|blocked)` 定式。本书仓库自己的这块循环契约只有 13 行(octos-book/.octos/loop.md),外环审查黑板 465 行、29 个编号条目、71 处 ACK 行。这本书的 v2 重写就是按这套协议驱动的:外环把每章的整改意见编号落板,内环按号执行并 ACK,主审复验后代推。黑板内容本身不进入本章,机制已经足够说明问题。
+内环侧的对应物是 `.octos/loop.md` 维护循环契约:读黑板 Active 区、取编号最小未 ACK 条目执行到完成、只 commit 不 push、补 `ACK(done|wontdo|blocked)` 定式。本书仓库自己的这块循环契约只有 13 行(octos-book/.octos/loop.md),外环审查黑板在本书 v2 动笔时点为 465 行、29 个编号条目、71 处 ACK 行(活文档,数字随批次增长,以 .octos/OUTER_LOOP_REVIEW.md 实时为准)。这本书的 v2 重写就是按这套协议驱动的:外环把每章的整改意见编号落板,内环按号执行并 ACK,主审复验后代推。黑板内容本身不进入本章,机制已经足够说明问题。
 
 ACK 三态构成一个小状态机:条目发出后处于 pending,内环执行后落 ACK 进入 done、wontdo 或 blocked 终态;wontdo 分支外环只能接受或升级 operator,不存在再次打回的边。这个状态机的全部强制力量来自契约测试:`octoscode/tests/olp_contract.rs`(367 行,8 个用例)对签入的黑板快照做 grep 型校验,`olp_ack_lines_match_v1_grammar`(`:96`)校验 ACK 行符合 v1 定式,豁免白名单(`:120`)把生效日期分界写死,未知 status 拒绝(`:159`)。换句话说,协议违约不会被运行时拦截,只会在下一次跑测试时变成红灯。
 
@@ -135,12 +135,12 @@ flowchart LR
 
 协议文本大部分落在 octoscode 仓,但外环真正要观测和驱动的对象在 octos 主仓。交叉面四个 CLI 加一个预算落点。`crates/octos-cli/src/commands/steer.rs:1` 头注释自证身份:`octos steer — external reviewer steer channel (OLP P2, slice 1)`,`STEER_MAX_BYTES`(`:22`)限 64KB,超限入队即拒,走 `.reviewer-notes` sidecar、user-message 层级而非系统指令。`crates/octos-cli/src/commands/ledger.rs:1` 头注释同样自证:`octos ledger tail — read-only goal-ledger tail (OLP L1, slice 4)`,外环用它审计 master 的 decisions 与 escalations 表(R3 的裁决审计面)。`crates/octos-cli/src/commands/peer.rs` 的 `list_peers`(`:54`)与 `crates/octos-cli/src/commands/goal.rs` 的 `GoalStatusArgs`(`:340`)构成 L1 只读观测三件套。
 
-goal 预算是约定与实现的组合:外环在任务书里按档位给条目定预算(修订 5-10M、切片 10-20M、战役 30-50M token,`octoscode/docs/OLP_OUTER_BOOT.md:34`),octos 侧的落点在 `crates/octos-cli/src/autonomy/goal_loop_runtime.rs`:`GoalRuntimeState`(`:265`)的五态里 budget_limited 是独立中间态而非失败,预算耗尽触发 `GoalBudgetResolution`(`:298`)走 GoalWrapUp 收口(`crates/octos-cli/src/autonomy/master_continuation_scheduler.rs:147`)。这些机制的内部实现属于第 18 章的范围,本章只强调外环视角的一个后果:预算耗尽不是事故,是有名字、可恢复的现场,外环回线后按账本收账即可。
+goal 预算是约定与实现的组合:外环在任务书里按档位给条目定预算(修订 5-10M、切片 10-20M、战役 30-50M token,`octoscode/docs/OLP_OUTER_BOOT.md:44`),octos 侧的落点在 `crates/octos-cli/src/autonomy/goal_loop_runtime.rs`:`GoalRuntimeState`(`:265`)是四态枚举(Active/Paused/Completed/Failed),budget_limited 不在运行时枚举里——它是 SQLite 账本侧的字符串状态,由 `cas_goal_status` 的预算规则写入;预算耗尽时运行时经 `GoalBudgetResolution`(`:298`)走 GoalWrapUp 收口(与第 18 章账本/运行时两层状态机的划界一致)(`crates/octos-cli/src/autonomy/master_continuation_scheduler.rs:147`)。这些机制的内部实现属于第 18 章的范围,本章只强调外环视角的一个后果:预算耗尽不是事故,是有名字、可恢复的现场,外环回线后按账本收账即可。
 
 协议还固化了驱动机制选型(`octoscode/docs/OUTER_LOOP_PROTOCOL.md:289` 起):外环在线盯着交互式攻坚时直驱 master,herdr 注入 user-message,切片化后每片一个 turn,比 handoff 到 peer 再 gather 少两跳;外环离线的长程任务用 /goal 承载,keeper 跨 turn 自动推进,escalation 走 goal 账本 durable 兜底。两种形态共用黑板与 ACK 契约层,选型只看外环在不在线。
 
 > **工程决策:为什么黑板是 Markdown 而不是数据库**
-> 黑板的需求清单:多写者并发追加不撕裂、条目可编号可去重、历史可审计、git 可版本化、任何 agent 不装依赖就能读写。Markdown 文件加 flock 追加脚本满足全部五条,而且第 18 章的 `GoalLedger`(`crates/octos-fleet/src/sqlite_ledger.rs:13`,6,360 行)已经证明结构化账本要付出多大工程代价:39 个公开方法、WAL 多进程并发、状态机嵌进 SQL。黑板的消费者是外环强模型,它能读自然语言,不需要查询计划;需要的机械性质只有追加原子性与 grep 可校验性,前者 24 行 shell 脚本(`octoscode/scripts/olp-board-append.sh:20-22`)解决,后者由 `octoscode/tests/olp_contract.rs:96` 的快照 grep 解决。把黑板做成数据库,等于为一个每天几十次写入、消费方只有一个模型读者的文件,引入一个需要迁移、需要备份、git 看不见 diff 的存储层。协议文档把这层取舍隐含在设计里:结构化的事实(目标状态、发现、升级)进 ledger,叙述性的判断(审查意见、异议、裁决)留在黑板,两类数据各走各的存储。
+> 黑板的需求清单:多写者并发追加不撕裂、条目可编号可去重、历史可审计、git 可版本化、任何 agent 不装依赖就能读写。Markdown 文件加 flock 追加脚本满足全部五条,而且第 18 章的 `GoalLedger`(`crates/octos-fleet/src/sqlite_ledger.rs:13`,6,360 行)已经证明结构化账本要付出多大工程代价:39 个公开方法、WAL 多进程并发、状态机嵌进 SQL。黑板的消费者是外环强模型,它能读自然语言,不需要查询计划;需要的机械性质只有追加原子性与 grep 可校验性,前者 24 行 shell 脚本(`octoscode/scripts/olp-board-append.sh:22-24`)解决,后者由 `octoscode/tests/olp_contract.rs:96` 的快照 grep 解决。把黑板做成数据库,等于为一个每天几十次写入、消费方只有一个模型读者的文件,引入一个需要迁移、需要备份、git 看不见 diff 的存储层。协议文档把这层取舍隐含在设计里:结构化的事实(目标状态、发现、升级)进 ledger,叙述性的判断(审查意见、异议、裁决)留在黑板,两类数据各走各的存储。
 
 ## 20.7 边界与回顾
 
@@ -149,7 +149,7 @@ goal 预算是约定与实现的组合:外环在任务书里按档位给条目�
 本章回顾:
 
 1. OLP v2 是三层叠加:协议条款(角色、信道、R1-R7)纯文档;黑板、ACK、loop.md 是 Markdown 约定,无 Rust 实现;机械强制只有三个契约测试文件 25 个用例对快照的 grep 与真实子进程验证。
-2. 黑板追加唯一正道是 `octoscode/scripts/olp-board-append.sh:20-22` 的 flock 三行;ACK 定式三态 done/wontdo/blocked,wontdo 只能被接受或升级,不得再次打回。
+2. 黑板追加唯一正道是 `octoscode/scripts/olp-board-append.sh:22-24` 的 flock 三行;ACK 定式三态 done/wontdo/blocked,wontdo 只能被接受或升级,不得再次打回。
 3. 第五信道是内环主动外呼的唯一通道:`octoscode/src/olp_mcp.rs` 恰好两个工具,90 秒超时降级(`:25`)、每片三次限额(`:27`)、tried 必填(`:184-187`)。
 4. 主审权锁诚实收缩:`octoscode/src/outer_duty.rs:23` 整模块 Linux-only,fd 即锁,PDEATHSIG 死亡耦合消灭 agent 活而锁闲的脑裂,check 只观察不夺取,活锁接管归 operator;macOS 退值班簿纪律层。
 5. 贵模型只花在判断上:双环的信道全部是文件、git 与 CLI,协议模型无关,换厂牌不换协议。
