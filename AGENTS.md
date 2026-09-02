@@ -51,7 +51,8 @@ Do not stop just to ask about:
    structure-editor 三个视角各出一份 review(只报告不改稿),按 事实错误 > 技术公平性 > 结构 > 措辞 修订。
 6. **去味润色**:独立的最后一遍,按 `trilingual-collab-zh.md` 执行:全角标点、盘古之白、破折号全篇 ≤2、
    加粗 ≤10、无清嗓子开场、无自问自答、无金句/总结复述结尾、无互联网黑话、无翻译腔、无弱化词堆叠。
-7. **交付声明**:ACK 或 result.md 里写明验证级别(verified / partially-verified / unverified)与三视角 review 的问题计数。
+7. **引用全路径**(硬规则):代码引用一律写成 `crates/<crate>/src/<path>.rs:行号` 或 `octoscode/src/<path>.rs:行号`、`herdr/src/<path>.rs:行号`,禁止 `mod.rs:809`、`records.rs:33` 这类无路径短引用;交稿前用 `grep -o -E '[A-Za-z0-9_./-]+\.rs(:[0-9]+)?' <稿> | grep -v -E '^(\.\./octos/)?(crates|octoscode|herdr)/' | wc -l` 自证为 0,并把命令与输出写进交付说明。
+8. **交付声明**:ACK 或 result.md 里写明验证级别(verified / partially-verified / unverified)与三视角 review 的问题计数。
 
 ## 车道分工(glm-5.3 vs glm-5.3-flash,peer_handoff 的 model 键)
 
