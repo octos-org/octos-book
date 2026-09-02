@@ -255,7 +255,7 @@ flowchart LR
 
 ### 15.4.5 updater 与 doctor:两条修复路径
 
-应用层自更新在 `crates/octos-services/src/updater.rs`(473 行),流程在 `update`(:140):download 到 verify 到 backup 到 replace,失败走 rollback。`check_latest`(:76)查 GitHub Releases,`Updater::new` 支持 `GITHUB_TOKEN` 环境变量鉴权(:40-48)。
+应用层自更新在 `crates/octos-services/src/updater.rs`(473 行),流程在 `update`(:140):download 到 verify 到 backup 到 replace,失败走 rollback。`check_latest`(:76)查 GitHub Releases,`Updater::new` 支持 `GITHUB_TOKEN` 环境变量鉴权(:40-49)。
 
 诊断路径独立于更新:`octos doctor` 走 octos-diagnostics 的检查集(终端环境、config/data、PATH/shadow、网络),按 `[✓]/[!]/[✗]` 产出报告,支持 JSON support-bundle 输出;`update --check` 走 Stage 2 的 GitHub client 与纯函数计划器(update.rs 的 `plan`)比对 semver,只报告不执行。两条路径合起来覆盖了「升级前确认环境」与「升级本身」两步。
 
