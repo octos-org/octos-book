@@ -163,6 +163,8 @@ pub const DEFAULT_STDIO_COMMAND: &str = "octos serve --stdio --solo";
 
 配套机制是 `--instance-data-dir`：多个 stdio 实例共享一个 config/profile 的 state home，各自持有私有的 runtime 数据目录（redb、sessions、serve lock），所以「一个用户开多个编辑器窗口」不会互相撞库。stdio 模式还复用了 serve 的整套控制面装配（watcher、事件、profile），只是传输层换成了管道。
 
+`--stdio` 还重新定义了 stdout 的所有权：stdout 被协议独占后，任何写向它的内容都会被客户端当成 JSON-RPC 帧去解析，一行调试打印就是一次协议破坏。tracing 日志、panic 信息、进度提示必须全部改走 stderr；同理，serve 在 stdio 链上派生的子进程若继承 stdout，其输出也会混进协议流，需要显式重定向。这也是前文 `reserve_stdout` 机制存在的根本原因：机器可读流与人读日志的信道分离，要在入口处一次划清。
+
 ### 14.4.3 serve 门禁
 
 `octos serve --help` 暴露的安全开关构成一组刻意设计的门禁（实测输出与 `assets/ch14-facts.md` 一致）：
