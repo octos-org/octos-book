@@ -10,7 +10,7 @@
 
 Channel trait（`../octos/crates/octos-bus/src/channel.rs:17-265`）定义了所有频道的统一接口：
 
-当前版本的 Channel trait 一共有 26 个方法，但真正**没有默认实现**的只有 3 个：`name()`、`start()`、`send()`。其余能力都以默认实现挂在 trait 上，真实频道按需覆盖：
+当前版本的 Channel trait 一共有 26 个方法，但真正没有默认实现的只有 3 个：`name()`、`start()`、`send()`。其余能力都以默认实现挂在 trait 上，真实频道按需覆盖：
 
 ```rust
 #[async_trait]
@@ -123,7 +123,7 @@ MAX_CHUNKS = 50：防止极长消息被分割为数百个小消息导致 DoS。�
 
 UTF-8 安全：硬切时使用 `is_char_boundary()` 回退到安全的字符边界（与 octos-core 的 `truncate_utf8` 使用相同的策略，详见第 2 章）。
 
-**平台特定限制**（`../octos/crates/octos-bus/src/coalesce.rs:5-24`）：
+平台特定限制（`../octos/crates/octos-bus/src/coalesce.rs:5-24`）：
 
 | 频道 | 字符限制 | 配置方法 |
 |------|---------|---------|
@@ -183,7 +183,7 @@ pub struct Session {
 
 第一，JSONL 文件的第一行不是消息，而是 `SessionMeta` 元数据，后续每一行才是 `Message`（`../octos/crates/octos-bus/src/session.rs:560-584`、`../octos/crates/octos-bus/src/session.rs:1365-1381`、`../octos/crates/octos-bus/src/session.rs:2992-3060`）。所以它不是“纯消息流”，而是“头一行 schema/meta + 后续消息行”的轻量日志格式。`SessionMeta` 现在也承载 `title`、`title_manual` 与 `child_contracts`，这使侧边栏标题和后台子任务状态不必塞进普通消息文本。
 
-第二，**当前代码同时支持旧布局和新布局**：
+第二，当前代码同时支持旧布局和新布局：
 
 1. `SessionManager` 仍支持 legacy flat layout：`data/sessions/{encoded-key}[_{hash}]?.jsonl`（`../octos/crates/octos-bus/src/session.rs:1096-1146`）
 2. `SessionActor` 使用的 `SessionHandle` 优先采用 per-user layout：`data/users/{encoded_base_key}/sessions/{topic_or_default}.jsonl`，并在打开时自动迁移旧文件（`../octos/crates/octos-bus/src/session.rs:1611-1819`）
@@ -220,9 +220,9 @@ Schema 版本：`CURRENT_SESSION_SCHEMA = 1`（`../octos/crates/octos-bus/src/se
 SessionManager（`../octos/crates/octos-bus/src/session.rs:903-905`）管理 admin/命令侧看到的会话缓存；而真正在线处理消息时，`SessionActor` 会转而持有自己的 `SessionHandle`，避免所有活跃会话共用一个大锁（`../octos/crates/octos-bus/src/session.rs:2426-2530`）。
 
 - LRU 内存缓存：活跃会话在内存中保持，减少磁盘 I/O
-- **惰性加载**：不活跃的会话按需从磁盘加载
-- **布局兼容**：同时扫描 legacy flat layout 和 per-user layout
-- **用户列表性能边界**：`list_top_level_sessions*()` 会跳过 `child-*` 与 `*.tasks` 等内部 topic，避免用户目录下大量后台子会话拖慢 `/api/sessions`（`../octos/crates/octos-bus/src/session.rs:965-1005`、`../octos/crates/octos-bus/src/session.rs:934-947`）
+- 惰性加载：不活跃的会话按需从磁盘加载
+- 布局兼容：同时扫描 legacy flat layout 和 per-user layout
+- 用户列表性能边界：`list_top_level_sessions*()` 会跳过 `child-*` 与 `*.tasks` 等内部 topic，避免用户目录下大量后台子会话拖慢 `/api/sessions`（`../octos/crates/octos-bus/src/session.rs:965-1005`、`../octos/crates/octos-bus/src/session.rs:934-947`）
 - 同 key 写入串行化：`persist_message_through_canonical_path()` 通过 per-key Tokio mutex 串行化 `SessionActor`、`ApiChannel` 与 `/chat` 路径的同 session 写入，避免多个独立 `SessionHandle` 同时看到相同长度并返回重复 sequence（`../octos/crates/octos-bus/src/session.rs:2332-2420`）
 
 ### 11.3.5 thread_id 持久化：新写入 fail closed，旧记录 load-time synthesis
@@ -322,9 +322,9 @@ pub fn split_message(text: &str, config: &ChunkConfig) -> Vec<String> {
 
 关键设计点：
 
-1. **提前返回**：空字符串直接返回空 `Vec`，短消息返回单块
+1. 提前返回：空字符串直接返回空 `Vec`，短消息返回单块
 2. 先做 UTF-8 安全窗口，再找语义断点：避免把 `find_break_point()` 变成“逻辑断点 + 编码边界”双重职责
-3. **边界清洗**：`trim_end()`、去掉前导换行、最多跳过一个空格，让 chunk 之间的视觉边界更自然
+3. 边界清洗：`trim_end()`、去掉前导换行、最多跳过一个空格，让 chunk 之间的视觉边界更自然
 
 ##### 窗口语义:先裁剪、再寻点
 
@@ -421,7 +421,7 @@ CLI（crates/octos-bus/src/cli_channel.rs，137 行）是最小实现样本：st
 > - 无索引，跨会话查询需要扫描所有文件
 > - 没有数据库级事务；复杂查询能力弱
 >
-> **选择理由：** 从当前源码看，octos 的会话访问模式几乎总是“按 key 读取一个 session、append 新消息、必要时 rewrite 整个 session、按需迁移布局”。JSONL 正好覆盖这些路径，而且能自然配合 SessionActor 的 per-session file ownership。
+> 选择理由： 从当前源码看，octos 的会话访问模式几乎总是“按 key 读取一个 session、append 新消息、必要时 rewrite 整个 session、按需迁移布局”。JSONL 正好覆盖这些路径，而且能自然配合 SessionActor 的 per-session file ownership。
 
 ---
 
@@ -475,8 +475,8 @@ fn fnv1a_64(data: &[u8]) -> u64 {
 
 ## 思考题
 
-1. **频道抽象的边界**：某些频道支持富文本（Slack Block Kit、飞书 Rich Text），但 `Channel::send()` 只接受纯文本。你会如何扩展 trait 以支持富文本，同时保持向后兼容？
-2. **会话恢复**：如果 octos 进程崩溃，JSONL 文件的最后一行可能不完整。你会如何实现崩溃恢复？
+1. 频道抽象的边界：某些频道支持富文本（Slack Block Kit、飞书 Rich Text），但 `Channel::send()` 只接受纯文本。你会如何扩展 trait 以支持富文本，同时保持向后兼容？
+2. 会话恢复：如果 octos 进程崩溃，JSONL 文件的最后一行可能不完整。你会如何实现崩溃恢复？
 
 ---
 
