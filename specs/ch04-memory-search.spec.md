@@ -1,5 +1,5 @@
 spec: task
-name: "Ch4. octos-memory：混合搜索的工程实现"
+name: "Ch4. octos-memory：混合搜索的工程实现(v2 勘误)"
 inherits: project
 tags: [part1, memory, search, bm25, hnsw, vector]
 depends: [ch02-core-types]
@@ -16,7 +16,11 @@ octos-memory（约 1600 行 Rust 源文件）实现了 Agent 的长期记忆。�
 
 - 源码目录: `crates/octos-memory/src/`
 - 重点文件: `hybrid_search.rs`, `episode.rs`, `memory_store.rs`, `store.rs`
-- 图表: 混合搜索流程图（查询→BM25 排名 + 向量排名→权重融合→结果）
+- 事实边界(2026-09-02 main): `crates/octos-memory/src/` 六个文件 `episode.rs guard.rs hybrid_search.rs lib.rs memory_store.rs store.rs`;`guard.rs` 需一段定位
+- 新面三处必补: ① `cc6744ba` BM25 top-k 分区 + dense accumulator(`hybrid_search.rs`,高 df 查询 10x),改写检索热路径小节;② `9ad56caa` `octos memory reindex`(`store.rs` + `crates/octos-cli/src/commands/memory.rs`)修复缺失/错宽 embedding;③ `4ccdbe7e` 向量降级从「可推断」变「可见」(`hybrid_search.rs`、`store.rs`)
+- 勘误方式: 保留章节结构,只改失实处与补新面;所有 `crates/octos-memory/src/*.rs:行号` 引用逐条重标
+- 图表: 混合搜索流程图（查询→BM25 top-k 分区 + 向量排名→权重融合→结果）、降级可见性状态图
+- 分析基线: octos main @ 9c157101;镜像同步 `book/src/part1/ch04.md`
 - 工程决策侧栏: 为什么不用 Qdrant/Milvus 等外部向量数据库
 
 ## 边界
@@ -89,3 +93,22 @@ octos-memory（约 1600 行 Rust 源文件）实现了 Agent 的长期记忆。�
   当 阅读工程决策侧栏
   那么 对比了嵌入式方案与 Qdrant/Milvus 在部署复杂度、性能、运维上的差异
   并且 说明了 octos 场景下嵌入式方案足够的理由
+
+场景: BM25 分区热路径已更新
+  测试: review_ch04_bm25_partition
+  当 阅读检索热路径小节
+  那么 写明 top-k 分区与 dense accumulator 的作用与触发条件
+  并且 引用 `hybrid_search.rs` 实际行号并注明 cc6744ba
+
+场景: reindex 与降级可见性写明
+  测试: review_ch04_reindex_degradation
+  当 阅读运维小节
+  那么 `octos memory reindex` 的用途与入口文件写明
+  并且 向量降级可见性的对外表现写明并引用 4ccdbe7e 改动位置
+
+场景: 引用零失效
+  测试: review_ch04_refs_valid
+  当 提取正文全部 `crates/octos-memory/src/*.rs:行号` 引用并对照当前源码
+  那么 每个路径存在
+  并且 每个行号区间不超过文件总行数
+  并且 区间内确实含所述符号
