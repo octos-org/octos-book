@@ -295,7 +295,7 @@ flowchart TD
 
 ## 15.5 与相邻章的边界
 
-本章讲的存储与服务是横向基础设施,几处容易与专章混淆的边界:安全机制全景(沙箱 fail-closed、注入防御、WorkerGrant)见第 7 章,本章只引用其结论(admin token 常量时间比较);Harness 事件 ABI、校验器与 schema 版本化见第 10 章,本章的 harness SSE 是它的传输层消费端;运行模式与配置体系见第 13 章,本章的 serve 控制面建立在其上;第 1 章的 26 crate 地图给出了三 crate 在全局依赖图中的位置,它们都挂在 octos-core 之下、octos-cli 之旁。另外,spec 提到的 agent lifecycle、goal/loop primitive 与 supervisor 持久化属于 orchestration substrate,是第 18 章的主题;本章只在 agent_orchestrator.rs 的 tenancy 命中统计里与它擦肩,不展开。
+本章讲的存储与服务是横向基础设施,几处容易与专章混淆的边界:安全机制全景(沙箱 fail-closed、注入防御、WorkerGrant)见第 7 章,本章只引用其结论(admin token 常量时间比较);Harness 事件 ABI、校验器与 schema 版本化见第 10 章,本章的 harness SSE 是它的传输层消费端;运行模式与配置体系见第 14 章,本章的 serve 控制面建立在其上;第 1 章的 26 crate 地图给出了三 crate 在全局依赖图中的位置,它们都挂在 octos-core 之下、octos-cli 之旁。另外,spec 提到的 agent lifecycle、goal/loop primitive 与 supervisor 持久化属于 orchestration substrate,是第 18 章的主题;本章只在 agent_orchestrator.rs 的 tenancy 命中统计里与它擦肩,不展开。
 
 ## 15.6 本章回顾
 
@@ -324,4 +324,4 @@ flowchart TD
 ---
 
 > **版本演化说明**
-> 本章分析基于 octos main @ `9c157101`(2026-09-02 提交,2026-09-03 复核)。相对旧版第 14 章:三个存储已从 octos-cli 迁至 `crates/octos-store/`,多租户实现迁至 `crates/octos-services/src/tenant.rs`(`render_frpc_config` :255 是新的部署路径),诊断独立成 `crates/octos-diagnostics/`(Stage 1 `7f81fa5e`、Stage 2 `1801a9e9`)。本章编号由 14 改为 15,认证三流与 Hooks 详见第 7 章与第 10 章。所有行号来自事实表 `assets/ch15-facts.md` 或本次会话对源码的只读核对。
+> 本章分析基于 octos main @ `9c157101`(2026-09-02 提交,2026-09-03 复核)。相对旧版第 14 章:三个存储已从 octos-cli 迁至 `crates/octos-store/`,多租户实现迁至 `crates/octos-services/src/tenant.rs`(`render_frpc_config` :255 是新的部署路径),诊断独立成 `crates/octos-diagnostics/`(Stage 1 `7f81fa5e`、Stage 2 `1801a9e9`)。本章编号由 14 改为 15,认证三流详见本章 15.1,Hooks 详见第 10 章。所有行号来自事实表 `assets/ch15-facts.md` 或本次会话对源码的只读核对。
