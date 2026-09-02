@@ -16,7 +16,7 @@ octos 当前的答案不是"一种万能插件"，而是三条互补轨道：
 
 Skills 是最轻量的扩展机制。一个 skill 的核心就是一个 `SKILL.md`，外加可选的 `manifest.json`。
 
-先看两条轨道在代码量上的悬殊分工：`crates/octos-agent/src/skills.rs` 全文 942 行，而 `crates/octos-agent/src/plugins/` 八个文件合计 14,675 行。这个数量差不是偶然，而是职责边界的直接体现。`skills.rs` 只回答一个问题：模型能看见什么。它负责发现技能目录、解析极简 frontmatter、判断可用性、把结果压成一个 XML 摘要注入系统提示，全程不碰进程、不碰协议、不碰安全策略。`plugins/` 回答的则是另一个问题：系统会执行什么。manifest 解析、可执行文件发现与校验、子进程协议、环境清理、审批与并发控制全部堆在这里；其中光是执行协议与安全约束（`tool.rs` 3,219 行）加上对应测试（`tool_tests.rs` 4,406 行）就占了近八成，可见"安全地跑一个外部程序"远比"描述一个提示片段"昂贵。一个 skill package 目录里同时放着 `SKILL.md` 与 `manifest.json` 时，正是这两条轨道的汇合点：`SkillsLoader` 读前者注入提示，`PluginLoader` 读后者注册工具，XML 索引里的 `tools="true"` 属性标记的就是这条接缝。
+先看两条轨道在代码量上的悬殊分工：`crates/octos-agent/src/skills.rs` 全文 942 行，而 `crates/octos-agent/src/plugins/` 八个文件合计 14,675 行。这个数量差不是偶然，而是职责边界的直接体现。`skills.rs` 只回答一个问题：模型能看见什么。它负责发现技能目录、解析极简 frontmatter、判断可用性、把结果压成一个 XML 摘要注入系统提示，全程不碰进程、不碰协议、不碰安全策略。`plugins/` 回答的则是另一个问题：系统会执行什么。manifest 解析、可执行文件发现与校验、子进程协议、环境清理、审批与并发控制全部堆在这里；其中光是执行协议与安全约束（`tool.rs` 3,219 行）加上对应测试（`tool_tests.rs` 4,406 行）就占了一半以上（51.96%），可见"安全地跑一个外部程序"远比"描述一个提示片段"昂贵。一个 skill package 目录里同时放着 `SKILL.md` 与 `manifest.json` 时，正是这两条轨道的汇合点：`SkillsLoader` 读前者注入提示，`PluginLoader` 读后者注册工具，XML 索引里的 `tools="true"` 属性标记的就是这条接缝。
 
 ### 9.1.1 `SKILL.md` 格式
 
@@ -48,7 +48,7 @@ When reviewing code, focus on:
 
 `SkillsLoader` 只维护一个"技能目录列表"，先加的目录优先级高（`../octos/crates/octos-agent/src/skills.rs:62-116`）。`list_skills()` 的实际组装顺序是：先装入编译内置的 `BUILTIN_SKILLS`，再按"低优先级目录先扫描、高优先级目录后覆盖"遍历，用 `retain` 删同名旧条目（`../octos/crates/octos-agent/src/skills.rs:118-173`）。这个"倒序遍历加去重"的实现换来一个性质：无论目录有多少层，同名技能最终只保留最高优先级来源的一份，且加载逻辑不需要知道每层目录的语义。
 
-目录列表本身来自部署面的拼装：`Config::plugin_dirs_from_project()` 依次收集 `<octos_home>/plugins`、`<octos_home>/skills`、`<octos_home>/bundled-app-skills/`，再追加分号分隔的 `OCTOS_SKILLS_PATH` 环境变量目录；旧的 `~/.octos/skills` HOME 全局目录已不再扫描，只发一次性迁移警告（`../octos/crates/octos-cli/src/config.rs:1330-1375`）。gateway 启动时还会把二进制里携带的 app-skills / platform-skills 引导到分层目录（`../octos/crates/octos-cli/src/commands/gateway/gateway_runtime.rs:566-573`、`../octos/crates/octos-agent/src/bootstrap.rs:103-115`）。
+目录列表本身来自部署面的拼装：`Config::plugin_dirs_from_project()` 依次收集 `<octos_home>/plugins`、`<octos_home>/skills`、`<octos_home>/bundled-app-skills/`，再追加冒号分隔的 `OCTOS_SKILLS_PATH` 环境变量目录；旧的 `~/.octos/skills` HOME 全局目录已不再扫描，只发一次性迁移警告（`../octos/crates/octos-cli/src/config.rs:1330-1375`）。gateway 启动时还会把二进制里携带的 app-skills / platform-skills 引导到分层目录（`../octos/crates/octos-cli/src/commands/gateway/gateway_runtime.rs:566-573`、`../octos/crates/octos-agent/src/bootstrap.rs:103-115`）。
 
 所以这不是"工作区 / 全局 / 内置"三层固定表，而是一个 layered view：部署目录提供共享基线，账号目录提供私有安装，环境变量提供额外注入。
 
@@ -99,7 +99,7 @@ When reviewing code, focus on:
 - `ToolRegistry` 为它们维护自定义提示文案和任务跟踪状态（`../octos/crates/octos-agent/src/tools/registry.rs:156-172`）
 - 主 agent 发现某次 tool call 命中 `spawn_only` 时，不同步执行，而是 `tokio::spawn` 一个后台任务，立刻向模型返回 `spawn_only_message`（`../octos/crates/octos-agent/src/agent/execution.rs:579` 起）
 
-这意味着 `spawn_only` 不是"从 ToolSpec 里隐藏掉"。按当前实现它们仍然注册在工具系统里并对模型可见；差别只是调用时被自动后台化。模型 therefore 不需要学习一套新的"任务提交工具"，它照常发起 tool call，运行时替它决定这次调用是同步等待结果，还是立刻返回句柄转后台继续跑。
+这意味着 `spawn_only` 不是"从 ToolSpec 里隐藏掉"。按当前实现它们仍然注册在工具系统里并对模型可见；差别只是调用时被自动后台化。模型不需要学习一套新的"任务提交工具"，它照常发起 tool call，运行时替它决定这次调用是同步等待结果，还是立刻返回句柄转后台继续跑。
 
 更进一步，`resolve_extras()` 在 skill package 含有 `spawn_only` 工具时注入技能卡 prompt fragment（`../octos/crates/octos-agent/src/plugins/extras.rs:39-45,449-456`）。这样模型既能看到工具，也能同时拿到"什么时候该用这个后台工具"的提示上下文。
 
