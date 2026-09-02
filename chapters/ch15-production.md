@@ -1,16 +1,16 @@
 # 第 15 章:生产化:存储、服务、运维面与多租户
 
-> **定位**:本章分析 octos 从开发工具走向生产系统时抽出的三块基础设施:octos-store(持久化)、octos-services(支撑服务)、octos-diagnostics(诊断),以及租户隔离与 frpc 隧道部署路径。前置依赖:第 13 章(运行模式)。适用场景:需要把 octos 部署到生产环境的运维人员(读者 D),以及想理解「巨型 CLI crate 如何安全拆分」的开发者(读者 B)。
+> **定位**:本章分析 octos 从开发工具走向生产系统时抽出的三块基础设施:octos-store(持久化)、octos-services(支撑服务)、octos-diagnostics(诊断),以及租户隔离与 frpc 隧道部署路径。前置依赖:第 14 章(运行模式)。适用场景:需要把 octos 部署到生产环境的运维人员(读者 D),以及想理解「巨型 CLI crate 如何安全拆分」的开发者(读者 B)。
 
 一个系统能跑起来,和它能被交给别人长期运维,中间隔着一批不性感的东西:凭据怎么存、审计怎么留、用量怎么记、坏了怎么诊断、多个租户怎么互相看不见。这些功能没有一个是用户主动要求的,但缺了任何一个,部署都会在某一天停下来。
 
-octos 的生产化经历了两次抽取。第一次把散在 `octos-cli` 里的持久化代码拉出来,成为 octos-store;第二次把支撑服务拉出来,成为 octos-services;最近一次把诊断和自更新计划逻辑拉出来,成为 octos-diagnostics。本章按这三个 crate 展开,再看多租户的四层隔离与 frpc 隧道部署路径,最后把运维面(指标、事件流、告警、自更新、doctor)拼成一张完整的生产控制面。
+octos 的生产化经历了三次抽取。第一次把散在 `octos-cli` 里的持久化代码拉出来,成为 octos-store;第二次把支撑服务拉出来,成为 octos-services;第三次把诊断和自更新计划逻辑拉出来,成为 octos-diagnostics。本章按这三个 crate 展开,再看多租户的四层隔离与 frpc 隧道部署路径,最后把运维面(指标、事件流、告警、自更新、doctor)拼成一张完整的生产控制面。
 
 认证三流(OAuth PKCE、device code、paste-token)与 Hooks 生命周期的完整走读分别在旧章位置已有覆盖,本章只保留结论性引用:凭据存储在 `~/.octos/auth.json`,Unix 下 `0o600` 权限(`crates/octos-cli/src/auth/store.rs:59-71`);bearer token 比较用常量时间实现,避免时序侧信道(`crates/octos-cli/src/api/router.rs:1124-1233`);Hooks 的 shell 协议(stdin JSON + exit code)与熔断器详见第 10 章。这样安排的目的是把篇幅留给「这次抽取到底改变了什么」。
 
 ---
 
-## 15.1 为什么要拆:两个 crate 的抽取史
+## 15.1 为什么要拆:三个 crate 的抽取史
 
 ### 15.1.1 抽取前的状态
 

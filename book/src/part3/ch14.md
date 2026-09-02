@@ -14,7 +14,7 @@
 
 所有子命令共用一条启动路径。`fn main()` 位于 `../octos/crates/octos-cli/src/main.rs:61`，做四件事：安装错误钩子、解析 clap 参数、合并分层默认值（`octos_cli::config_layer::apply`，`main.rs:80`）、执行子命令（`args.command.execute()`，`main.rs:101`）。
 
-子命令清单是 `pub enum Command`（`../octos/crates/octos-cli/src/commands/mod.rs:114`），27 个变体每个对应一个命令结构体。`Executable for Command` 的 `match` 分派在 `mod.rs:381` 起：
+子命令清单是 `pub enum Command`（`../octos/crates/octos-cli/src/commands/mod.rs:114`），28 个变体每个对应一个命令结构体。`Executable for Command` 的 `match` 分派在 `mod.rs:381` 起：
 
 ```rust
 // commands/mod.rs:381-399（节选）
@@ -364,7 +364,7 @@ profile 的 policy 翻转有防误报回归注释（`crates/octos-cli/src/config
 1. `--stdio` 模式复用 serve 的全部控制面装配但只服务一个客户端。如果要支持「一个 data dir、八个编辑器窗口」，`--instance-data-dir` 的共享/私有边界应该划在哪里？哪些 store 必须私有，哪些可以共享？
 2. watcher 的 `RestartRequired` 只告警不动作。如果要在 gateway 里把 `gateway.channels` 变更做成「计划内重启」（drain 在途消息后自重启），需要哪些前提才能保证不丢消息？
 3. mcp-serve 的粗粒度边界把工具选择权留给了 octos session 内部。如果一个外层编排器需要「逐步审批每次工具调用」，这个边界还成立吗？应该在哪一层加审批原语？
-4. `config_layer` 用 `value_source` 区分「用户显式给」与「默认值」。如果不用这个机制，改用 `Option<T>` 字段自己判空，27 个命令结构体要付出什么代价？
+4. `config_layer` 用 `value_source` 区分「用户显式给」与「默认值」。如果不用这个机制，改用 `Option<T>` 字段自己判空，28 个命令结构体要付出什么代价？
 
 ---
 
