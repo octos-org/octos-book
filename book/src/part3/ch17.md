@@ -63,7 +63,7 @@ flowchart LR
 
 Fanout 单独做成变体而不是调用方自己克隆契约表，理由在幂等：`::variant` 后缀的生成规则由原语控制，每份展开契约的 `contract_id` 稳定可复现，同一 pattern 两次展开得到同一组 id，重试与恢复才能对上 redb 里的行。调用方手写克隆一旦改了 id 格式，恢复路径就找不回旧状态。测试 `should_expand_fanout_pattern_into_variant_contracts`（`crates/octos-swarm/tests/swarm_dispatch.rs:707`）钉住展开规则。
 
-Pipeline 的失败语义值得单独说。早期的实现里，若 stage-2 可重试失败，stage-3 会在同一轮被无输入派发，然后被记为 `Completed`，链条 silently 断裂。修复（#1717，测试 `should_stop_pipeline_round_at_retryable_stage_and_resume_with_input`，`crates/octos-swarm/tests/swarm_dispatch.rs:763`，下文测试引用均省略 `crates/octos-swarm/tests/` 前缀）加了一条前置条件：一个 stage 只有在前驱 `Completed` 时才可能被派发，恢复轮同样适用。测试断言 stage-2 两次尝试都链接到 stage-1 的输出、stage-3 恰好运行一次且拿到恢复后的 stage-2 输出。
+Pipeline 的失败语义值得单独说。早期的实现里，若 stage-2 可重试失败，stage-3 会在同一轮被无输入派发，然后被记为 `Completed`，链条 静默断裂。修复（#1717，测试 `should_stop_pipeline_round_at_retryable_stage_and_resume_with_input`，`crates/octos-swarm/tests/swarm_dispatch.rs:763`，下文测试引用均省略 `crates/octos-swarm/tests/` 前缀）加了一条前置条件：一个 stage 只有在前驱 `Completed` 时才可能被派发，恢复轮同样适用。测试断言 stage-2 两次尝试都链接到 stage-1 的输出、stage-3 恰好运行一次且拿到恢复后的 stage-2 输出。
 
 Sequential 的中止语义同样跨崩溃成立。`run_sequential_round` 在处理每个待重试槽位前，先扫一遍它之前的所有子任务：只要发现任何一个 `TerminalFailed`，整轮立即返回中止标记（`crates/octos-swarm/src/dispatcher.rs:478`）。这条检查表面看是多余的（中止时循环早就 break 了），但它守护的是恢复路径：一份带着硬失败标记的记录被重启后的新进程重新 dispatch，尾部的契约必须保持 `not_run`，不能因为「这轮刚开始」就被派发出去。测试 `should_not_resume_sequential_tail_after_persisted_terminal_failure`（`crates/octos-swarm/tests/swarm_dispatch.rs:1213`）与 Pipeline 版本（:1163）钉住了这个边界。
 
