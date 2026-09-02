@@ -341,8 +341,6 @@ pub fn split_message(text: &str, config: &ChunkConfig) -> Vec<String> {
 
 Coalescing 解决「一条太长」，去重解决「一条收到两次」。Webhook 类平台（飞书、Twilio、企业微信）在超时重试时可能投递同一事件多次，`MessageDedup` 用容量 1,000、TTL 60 秒的 LRU 缓存记录已见过的消息 ID（`../octos/crates/octos-bus/src/dedup.rs:12-25`；`is_duplicate` 在 42-61 行）。Discord 网关重连后重放事件，也在 `discord_channel.rs:32` 挂了同一个实例。两个机制正交：去重发生在 inbound 入口，切割发生在 outbound 出口，各管一段。入口不去重，一条重复消息会被切割成两倍量的块；出口不切割，任何一条超限消息直接被平台 API 拒收。
 
-4. **MAX_CHUNKS 保护**：超过上限时插入独立截断块，而不是静默丢尾部
-
 ### 11.4.1 Unicode 安全的边界检测
 
 `find_break_point()` 的硬切分支（第 5 级）使用了与 octos-core `truncate_utf8` 相同的字符边界回退算法：
@@ -387,7 +385,7 @@ octos-bus 通过 feature flags 按需编译各频道实现。每个频道实现 
 
 表中较晚接入的四个频道值得各花一段说清定位。
 
-**DingTalk**（dingtalk_channel.rs，544 行）走「自定义机器人发送 + outgoing-robot webhook 接收」的双通道模式。关键在 `sessionWebhook`：outgoing 事件里携带一个短期有效的会话级 webhook URL，频道按会话缓存它，回复优先发往这个缓存地址而不是全局配置的 webhook（dingtalk_channel.rs:281、321；无缓存且无配置时报错于 196 行）。这样设计是因为钉钉的 outgoing 模式下，回复必须回到「发起这次对话的那个机器人会话」，全局地址做不到这一点，而短期 URL 又要求缓存失效后能回退。
+**DingTalk**（dingtalk_channel.rs，544 行）走「自定义机器人发送 + outgoing-robot webhook 接收」的双通道模式。关键在 `sessionWebhook`：outgoing 事件里携带一个短期有效的会话级 webhook URL，频道按会话缓存它，回复优先发往这个缓存地址而不是全局配置的 webhook（dingtalk_channel.rs:281、发送优先级判定 188-199；无缓存且无配置时报错于 196 行）。这样设计是因为钉钉的 outgoing 模式下，回复必须回到「发起这次对话的那个机器人会话」，全局地址做不到这一点，而短期 URL 又要求缓存失效后能回退。
 
 **LINE**（line_channel.rs，826 行）是标准的 webhook + Messaging API 组合，安全链路在签名校验：对原始请求体做 HMAC-SHA256，Base64 后与 `X-Line-Signature` 头做常数时间比较（line_channel.rs:87-95，`ct_eq` 来自 subtle crate）。用常数时间比较而不是 `==`，是防时序侧信道逐字节猜签名；用原始 body 而不是反序列化后的字符串，是防 JSON 规整化差异导致验签失败。这两个选择都是平台集成里反复踩坑后的标准答案。
 
