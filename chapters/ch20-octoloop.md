@@ -38,7 +38,7 @@ flowchart TB
 
 **R1 ACK 义务**(`:52`)。黑板 Active 区的每条意见,runtime 执行后必须在条目下补一行 ACK,无 ACK 视为未读,外环有权打回交付。v1 起 ACK 行用定式语法 `ACK(done|wontdo|blocked): <说明>`,三态各有语义:done 写做了什么与证据(commit hash 或测试结果);wontdo 是带证据的异议,分歧规则限定外环对 wontdo 只能接受或升级 operator,不得对同一条目再次打回;blocked 写阻塞原因与解除条件。案例:2026-08-23 的 v0 实验(`:196` 起)黑板十条评审项全部带 ACK 收口,其中第 9 条内环以证据拒绝重派指令(ACK wontdo),外环复核后接受,事后证明内环是对的。这一条是纯条款加契约:语法由 `octoscode/tests/olp_contract.rs:96` 的 `olp_ack_lines_match_v1_grammar` 钉住,豁免边界由 `:120` 的 `olp_ack_exemption_is_bounded_whitelist`(v1 语法只约束 2026-08-24 起新增的 ACK 行,历史行不重写)与 `:159` 的 `olp_ack_rejects_unknown_status` 钉住。
 
-**R2 诚实验证声明**(`:67`)。每个交付必须声明 verified(跑过 `cargo test --all-targets` + clippy + fmt)、partially-verified(列出实际跑了什么)、unverified(说明原因)三档之一;声称 verified 但复验不符视为协议违例。案例来自 v0 实验与后续性能战役(`:218` 起)的两类反例:其一,peer 在沙箱里声明「本机无工具链」,真相是权限档 1-4 的 bwrap 沙箱不挂载 `~/.cargo` 与 `~/.rustup`,任何构建命令都 command not found;其二,测试全绿不等于真机正确,快照机制单测全过但对存量大账本零收益,writer 超时重驱动的内存 duplex 测试全过但真管道字节流损坏。R2 的实战增补因此写成:凡涉 IO/并发,外环终审要求真 OS 原语复验(真管道、真文件),内存替身只配当冒烟。
+**R2 诚实验证声明**(`:67`)。每个交付必须声明 verified(跑过 `cargo test --all-targets` + clippy + fmt)、partially-verified(列出实际跑了什么)、unverified(说明原因)三档之一;声称 verified 但复验不符视为协议违例。案例来自 v0 实验与后续性能战役(`:212` 起)的两类反例:其一,peer 在沙箱里声明「本机无工具链」,真相是权限档 1-4 的 bwrap 沙箱不挂载 `~/.cargo` 与 `~/.rustup`,任何构建命令都 command not found;其二,测试全绿不等于真机正确,快照机制单测全过但对存量大账本零收益,writer 超时重驱动的内存 duplex 测试全过但真管道字节流损坏。R2 的实战增补因此写成:凡涉 IO/并发,外环终审要求真 OS 原语复验(真管道、真文件),内存替身只配当冒烟。
 
 **R3 升级分级**(`:71`)。escalation 三级:runtime 自决(重试换法)、outer 裁决(技术取舍、批不批方案)、operator 裁决(权限审批、范围变更、对外动作)。外环不得代替 operator 按下审批;operator 缺席时 escalation 保持 park。案例:v0 实验第 10 条,新依赖 signal-hook 走了升级请求;更重要的是裁决审计面(`:322` 起),goal 模式下 master 不会为「自认为解决了」的事再问外环,历史样本里 goal_03 测量方法错误,master 与 peer 均无自觉、零上报,外环审文档才抓住,所以外环必须主动审计 ledger 的 decisions/escalations 表。
 
@@ -46,13 +46,13 @@ flowchart TB
 
 **R4b 树主权与自动围栏**(`:77`)。多 goal 撞同一棵树时,主工作树只属一个 goal:自动围栏谓词(active goal 大于 1、peer 目标分支与主树分支不一致、主树有未围栏在途 peer)命中即自动开 worktree;树主权第一个落非默认分支的 goal 持久化进 goal-ledger,重启恢复;不属 owner goal 的会话在主树做跨分支 checkout 一律拒绝并提示开围栏。这条把防撞从「外环 steer 盯着」降级为系统默认机制,外环只在谓词未覆盖的边界补位(octos #20-20c 移交,作为 R4 子条款,不升协议版本)。
 
-**R5 指导幂等**(`:89`)。外环意见带日期与唯一编号,只在 Active 区可执行;ACK 后移入历史区永不重放,重复投递以 ACK 为去重依据。这条直接回应 inbox 阅后即焚曾吞掉指导的已知局限(`:345`):R 系列规则一律不依赖 inbox。
+**R5 指导幂等**(`:89`)。外环意见带日期与唯一编号,只在 Active 区可执行;ACK 后移入历史区永不重放,重复投递以 ACK 为去重依据。这条直接回应 inbox 阅后即焚曾吞掉指导的已知局限(`:339`):R 系列规则一律不依赖 inbox。
 
 **R6 版本协商**(`:103`)。协议文档头部声明 `protocol: olp/v2`(`octoscode/docs/OUTER_LOOP_PROTOCOL.md:7`),`octoscode/AGENTS.md:3` 引用同版本,信道语义变更必须升版本。双处一致由 `octoscode/tests/olp_contract.rs:215` 的 `olp_version_consistent_across_docs` 钉住,这是六条规则里唯一有机械验证兜底的版本纪律。
 
 **R7 主审权 OS 独占锁**(`:91`,olp/v2 起,#38-r1)。多外环并存时主审权以 per-project 会话寿命 OS 锁为准,详见 20.5 节。条款本身就写明范围:Linux-only,单机 flock + PDEATHSIG + /proc,NFS 不适用,Windows LockFileEx 另立条目。
 
-条款之外,协议文档还固化了多外环协作规则:黑板批注一律带署名(无署名视为历史兼容的默认外环);每个进行中条目只有一个主审外环,他人只能留署名意见;两外环意见相左时不在黑板上互相打回,各自写署名意见升级 operator(`:260` 起)。v1 到 v2 的变更记录在 `:12-15`,附录 A 固化 result.md frontmatter v1 六字段(`:354`),附录 B 固化 sub_providers 车道模板与双环搭配矩阵(`:375`/`:393`):分析与验证走 cheap 车道,实施与 keeper 留主档,理由是前者的产出被外层审查兜底,后者的产出直接进主线与账本。
+条款之外,协议文档还固化了多外环协作规则:黑板批注一律带署名(无署名视为历史兼容的默认外环);每个进行中条目只有一个主审外环,他人只能留署名意见;两外环意见相左时不在黑板上互相打回,各自写署名意见升级 operator(`:253` 起)。v1 到 v2 的变更记录在 `:12-15`,附录 A 固化 result.md frontmatter v1 六字段(`:348`),附录 B 固化 sub_providers 车道模板与双环搭配矩阵(`:369`/`:387`):分析与验证走 cheap 车道,实施与 keeper 留主档,理由是前者的产出被外层审查兜底,后者的产出直接进主线与账本。
 
 ## 20.3 黑板与 ACK:没有运行时的协议核心
 
@@ -79,7 +79,7 @@ stateDiagram-v2
 
 R5 的幂等语义依赖 ACK 行做去重键:同一编号再投递,已有 ACK 即跳过。这解释了为什么 ACK 必须是定式语法而说明部分自由文本非空即可:机器只 grep 状态词与编号,不解析自然语言。
 
-这层约定的价值要在事故里看。协议文档的已知局限一节(`octoscode/docs/OUTER_LOOP_PROTOCOL.md:345`)记录了 inbox notes 阅后即焚曾实测吞掉指导,所以 R 系列一律不依赖它;日志按进程启动日期滚动而非自然日,tail 要同时跟两天的文件;session-hash 用 DefaultHasher 跨 Rust 版本不保证稳定,外环不得用它持久寻址。三个局限全部指向同一个设计结论:凡是会被静默丢掉的信道,都不能承载协议义务;义务只落在黑板、git 与 ledger 这三个重启幸存的载体上。
+这层约定的价值要在事故里看。协议文档的已知局限一节(`octoscode/docs/OUTER_LOOP_PROTOCOL.md:339`)记录了 inbox notes 阅后即焚曾实测吞掉指导,所以 R 系列一律不依赖它;日志按进程启动日期滚动而非自然日,tail 要同时跟两天的文件;session-hash 用 DefaultHasher 跨 Rust 版本不保证稳定,外环不得用它持久寻址。三个局限全部指向同一个设计结论:凡是会被静默丢掉的信道,都不能承载协议义务;义务只落在黑板、git 与 ledger 这三个重启幸存的载体上。
 
 ## 20.4 第五信道:内环在 turn 内反向外呼
 
@@ -110,7 +110,7 @@ sequenceDiagram
 
 多外环并存的最大风险是双头指令:单外环的注入都会落后一个 turn,两个外环必然打架。olp/v2 的答案是 R7 主审权锁,实现是 `octoscode/src/outer_duty.rs`(476 行)。模块第一条编译期声明就是 `#![cfg(target_os = "linux")]`(`:23`):整个模块在 macOS 上不编译,非 Linux 平台的 CLI 显式 unsupported 退出。代码注释把这称为 honest shrink,与其在 macOS 上假装锁存在,不如诚实地不可用。
 
-锁的设计密度值得逐符号读。`DutyState`(`:34`)三态枚举 Vacant/Held/Error,`as_str`(`:43`)输出单行机器可读的 `VACANT`/`HELD`/`ERROR`,契约明确 Error 绝不伪装成 VACANT,坏输入宁可报错也不让调用方误判可上岗。锁文件路径 `~/.octos/outer/duty/<sha256>.lock`(`lock_path` 在 `:63`,HOME 缺失 fail-closed),摘要用 `lock_digest`(`:83`)算 SHA-256,域前缀 `LOCK_DOMAIN = "octoscode/outer-duty/v1"`(`:55`);注释明确不用 DefaultHasher,因为它跨 Rust 版本不稳定(`octoscode/docs/OUTER_LOOP_PROTOCOL.md:349` 的已知局限同源)。`DutyHold`(`:99`)让 fd 即锁:唯一持有者,CLOEXEC 保持置位不外泄。`acquire`(`:162`)flock 持锁并收紧文件权限;`check`(`:220`)仅观察、绝不夺取。metadata sidecar(`write_metadata`/`read_metadata` 在 `:259`/`:311`)与一切 TTL 只作诊断,绝不参与裁定,防止「锁还在但旁路数据说它过期」的裁决分裂。
+锁的设计密度值得逐符号读。`DutyState`(`:34`)三态枚举 Vacant/Held/Error,`as_str`(`:43`)输出单行机器可读的 `VACANT`/`HELD`/`ERROR`,契约明确 Error 绝不伪装成 VACANT,坏输入宁可报错也不让调用方误判可上岗。锁文件路径 `~/.octos/outer/duty/<sha256>.lock`(`lock_path` 在 `:63`,HOME 缺失 fail-closed),摘要用 `lock_digest`(`:83`)算 SHA-256,域前缀 `LOCK_DOMAIN = "octoscode/outer-duty/v1"`(`:55`);注释明确不用 DefaultHasher,因为它跨 Rust 版本不稳定(`octoscode/docs/OUTER_LOOP_PROTOCOL.md:343-345` 的已知局限同源)。`DutyHold`(`:99`)让 fd 即锁:唯一持有者,CLOEXEC 保持置位不外泄。`acquire`(`:162`)flock 持锁并收紧文件权限;`check`(`:220`)仅观察、绝不夺取。metadata sidecar(`write_metadata`/`read_metadata` 在 `:259`/`:311`)与一切 TTL 只作诊断,绝不参与裁定,防止「锁还在但旁路数据说它过期」的裁决分裂。
 
 死亡耦合是这条锁的灵魂:`spawn_holder_child`(`:345`)用 setpgid 加 `PR_SET_PDEATHSIG(SIGKILL)` 把 agent 与 wrapper 绑死,并处理 fork 与 prctl 之间的竞态(`:345-380`)。wrapper 是唯一锁 fd 持有者,wrapper 亡则 agent 必亡,锁即 VACANT,不存在 agent 活着而锁显示空闲的脑裂;反过来 agent 退出而孙辈进程长驻,锁同样归 VACANT,孙辈不持有 fd。活锁接管只归 operator:终止旧 holder 后再 acquire,无 agent 自助强夺。
 
