@@ -122,7 +122,7 @@ pub(super) fn check_budget(
 
 `BudgetStop`（`crates/octos-agent/src/agent/budget.rs:13`）五个变体各携带对用户有意义的上下文：`MaxIterations { limit }` 带上限值，`MaxTokens { used, limit }` 带双方数字，两种 timeout 带 limit。`BudgetStop::message()`（L41）负责把这些变体渲染成可操作的终止消息；`report_budget_stop`（L141）再把它变成 `ProgressEvent` 上报。
 
-预算侧四个公开函数各守一段，分工不是随手切的。`BudgetStop` 枚举（L13）把「为什么停」定义成数据，五个变体就是五种用户可区分的结局；`message()`（L41）是唯一的渲染点，终止文案集中在这里，用户在任何界面看到的预算终止话术都出自同一处，不会出现 CLI 说「达到上限」而网关说「budget exceeded」的分裂；`budget_tokens_used`（L90）是唯一的算术点，cache 计入规则改一处即全局生效；`check_budget`（L100）是唯一的判定点，五道闸顺序只在这一个函数里存在；`report_budget_stop`（L141）是唯一的上报点。判定、算术、渲染、上报四件事各一个函数，意味着预算行为的任何变更都能定位到单一函数，而调用方（两个循环体）只需面对「Option<BudgetStop>」这一种中间表示。若把这四件事摊进循环体，五道闸的顺序约束就会散落两处，两个循环迟早演化出不同的停止顺序。
+预算侧四个公开函数各守一段，分工不是随手切的。`BudgetStop` 枚举（L13）把「为什么停」定义成数据，五个变体就是五种用户可区分的结局；`message()`（L41）是唯一的渲染点，终止文案集中在这里，用户在任何界面看到的预算终止话术都出自同一处，不会出现 CLI 说「达到上限」而网关说「budget exceeded」的分裂；`budget_tokens_used`（L90）是唯一的算术点，cache 计入规则改一处即全局生效；`check_budget`（L100）是唯一的判定点，五道闸顺序只在这一个函数里存在；`report_budget_stop`（L141）是唯一的上报点。判定、算术、渲染、上报四件事各一个函数，意味着预算行为的任何变更都能定位到单一函数，而调用方（两个循环体）只需面对 `Option<BudgetStop>` 这一种中间表示。若把这四件事摊进循环体，五道闸的顺序约束就会散落两处，两个循环迟早演化出不同的停止顺序。
 
 ### 5.3.2 Grace：硬停前的一次宽限
 
