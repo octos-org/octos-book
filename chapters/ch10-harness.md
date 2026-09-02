@@ -87,7 +87,9 @@ pub struct ValidationPolicy {
     }
 ```
 
-Hard 失败阻止 spawn 任务到达终态成功；Soft 失败只留台账与告警，用于「主产物必须交付、副产物尽力而为」的部分交付契约。旧布尔字段原样保留以兼容旧策略文件，新旧两套字段由这一个函数收拢。声明式设计让这种平滑迁移成为可能。
+Hard 失败阻止 spawn 任务到达终态成功；Soft 失败只留台账与告警，用于「主产物必须交付、副产物尽力而为」的部分交付契约；None 的门禁行为与 Soft 相同，但台账里明确标注「仅供参考」。旧布尔字段原样保留以兼容旧策略文件，新旧两套字段由这一个函数收拢。声明式设计让这种平滑迁移成为可能。
+
+三档的判据写在 `Required` 枚举（`crates/octos-agent/src/workspace_policy.rs:198`）的文档注释里，两个辅助方法把语义钉死：`is_hard()` 决定非 Pass 结果是否把 spawn 任务降级为 Failed，只有 Hard 为真；`is_warning_only()` 决定是否仅告警，Soft 与 None 都是。运维上这意味着 dashboard 可以按台账里的 tier 标签把失败切成三类：hard 失败要立刻处理，soft 失败要看副产物是否影响下游，none 失败纯属信息。选档的实用判据是问一句「这个校验不过，交付物还能用吗」：主产物文件存在性选 Hard，预览文件、附加报告选 Soft，风格类检查选 None。`as_str()` 输出的稳定标签（hard/soft/none）直接进指标与台账记录，运维面板不需要理解 Rust 枚举就能过滤。
 
 ### 10.1.3 执行层：`ValidatorRunner` 的五步时序
 
@@ -198,6 +200,8 @@ flowchart TD
     F --> G[操作员看到: 类型/实读/上限<br/>+ 升级提示]
 ```
 
+为什么这扇门只朝一个方向关？「旧 runtime 读新 payload」与「新 runtime 读旧 payload」的风险天然不对称：旧数据缺的只是新字段，serde 缺省值补零即可安全读出，读到的语义是「老形状」，正确；而旧 runtime 遇上新 payload，新字段可能是旧代码无法理解的语义变更（比如一个字段从单值变成列表），任何「尽力解析」都是在猜，猜错的代价是静默错读。工程权衡因此落在保守侧：宁可让操作员看到一条带类型名、实读版本与支持上限的报错并升级 octos，也不让坏数据无声流过整条管线。这也是 `check_supported` 的错误消息固定附带「upgrade octos to a newer release」提示的原因（`crates/octos-agent/src/abi_schema.rs:144-151` 的 Display 实现）：fail closed 的报错必须同时给出解法，否则只是把故障换个形态。反向的「新读旧」则交给缺省值：五个耐久类型的 `schema_version` 字段全部用 `#[serde(default = "...")]` 标注，2026 年 4 月前的旧策略文件零改动继续加载，升级 octos 不需要迁移仪式。
+
 这套语义与 `docs/OCTOS_HARNESS_ABI_VERSIONING.md` 的五条兼容规则逐条对应：缺 `schema_version` 按 v1 反序列化；未知大版本用类型化错误拒绝、绝不 panic；同一大版本内 stable 字段含义不变，新增可选字段必须缺省为空；破坏性变更必须 bump 大版本并留双版本过渡窗口；外部消费者应先分支 `schema_version` 再读版本特定字段。三条护栏中「缺字段默认 v1」让 2026 年 4 月之前的旧策略文件今天照常加载；「超上限拒绝」保证旧 runtime 不会错读未来 payload。`should_reject_future_workspace_policy_schema_version`（`crates/octos-agent/tests/abi_compat.rs:259`）与 `should_default_workspace_policy_to_v1_when_schema_version_missing`（`:197`）把两条各钉一钉。13 个用例的 `abi_compat.rs` 用 fixture 文件驱动，覆盖五个耐久类型的新旧两端。
 
 版本化的对象是 runtime 序列化形状，不是 skill/plugin 自己的发布版本（那是 `manifest.json` 的 version 字段），第 9 章曾区分过这两个概念，本章是它的执行机制。
@@ -252,6 +256,8 @@ on_verify = [
 注意 `$primary` 引用：产物声明与校验规则解耦，改名产物只动一处。这个 TOML 还展示了字符串校验的三层结构如何与 `WorkspacePolicy` 的段一一对应：`[validation]` 是校验层，`[artifacts]` 是产物层，`[spawn_tasks.*]` 把两者装配成任务契约，`on_verify` / `on_deliver` / `on_failure` 分别挂在验证、交付、失败三个时点。`file_size_min` 64 字节堵住「零字节 diff 也算交付」的漏洞。空补丁文本恰好过 `file_exists`，但过不了大小下限。字符串校验（`on_completion`）与类型化 validators 两轨在此并存，新代码建议走后者。
 
 其余三个 starter 各占一段：`harness-starter-audio` 展示独占资源契约：`synthesize_clip` 写 `audio/<slug>.wav` 必须声明 exclusive 并发类，primary 产物配 `file_size_min` 4096 字节的下限校验；`harness-starter-report` 是最小报告契约:`reports/*.md` 主产物、completion `file_exists`、failure 时 `notify_user`；`harness-starter-generic` 则是剥掉领域细节的空白模板，适合作为新 app skill 的起点。写新 app skill 时应把这四个目录当工程清单逐项核对：manifest 声明、并发类、产物契约、校验门禁、失败通知，一项不缺再动手写业务代码。
+
+从用户视角看，starter 的价值在于把本章机制收敛成「复制目录、改两份声明文件」的动手路径：`manifest.json` 描述工具长什么样（输入 schema、并发类、超时），`workspace-policy.toml` 描述产出怎么算数（产物模式、校验规则、失败通知），`src/` 里的业务代码只管干活，不需要知道 ValidatorRunner 或事件信封的存在。四份 `workspace-policy.toml` 放在一起读还能看出契约松紧的梯度：coding 的 `file_size_min:$primary:64` 是字节级下限，audio 提到 4096 因为 WAV 头本身就不小，report 只用 `file_exists` 因为 Markdown 报告的合理大小无法预判，generic 则留空让用户自己填。同一个机制，四种松紧，全靠声明层的数据调整，一行 runner 代码不用改，这正是 10.1.1 节「校验是数据不是代码」在用户侧的兑现。
 
 ---
 
