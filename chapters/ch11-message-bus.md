@@ -186,7 +186,7 @@ pub struct Session {
 第二，**当前代码同时支持旧布局和新布局**：
 
 1. `SessionManager` 仍支持 legacy flat layout：`data/sessions/{encoded-key}[_{hash}]?.jsonl`（`../octos/crates/octos-bus/src/session.rs:1096-1146`）
-2. `SessionActor` 使用的 `SessionHandle` 优先采用 per-user layout：`data/users/{encoded_base_key}/sessions/{topic_or_default}.jsonl`，并在打开时自动迁移旧文件（`../octos/crates/octos-bus/src/session.rs:1608-1815`）
+2. `SessionActor` 使用的 `SessionHandle` 优先采用 per-user layout：`data/users/{encoded_base_key}/sessions/{topic_or_default}.jsonl`，并在打开时自动迁移旧文件（`../octos/crates/octos-bus/src/session.rs:1611-1819`）
 
 只有在 legacy flat 布局里，文件名才由下面这两部分构成：
 
@@ -326,7 +326,7 @@ pub fn split_message(text: &str, config: &ChunkConfig) -> Vec<String> {
 2. **先做 UTF-8 安全窗口，再找语义断点**：避免把 `find_break_point()` 变成“逻辑断点 + 编码边界”双重职责
 3. **边界清洗**：`trim_end()`、去掉前导换行、最多跳过一个空格，让 chunk 之间的视觉边界更自然
 
-#### 11.4.1 窗口语义:先裁剪、再寻点
+##### 窗口语义:先裁剪、再寻点
 
 切割循环里最容易被忽略的是「窗口」这一步。`split_message()` 不是在整个剩余文本上找断点，而是先构造 `search = &remaining[..limit]` 这个不超过 `max_chars` 的搜索窗口，`find_break_point()` 只在这个窗口内做 `rfind()`（`../octos/crates/octos-bus/src/coalesce.rs:72-73`）。两层职责由此分开：窗口负责编码安全（`is_char_boundary()` 回退，coalesce.rs:68-71），断点函数负责语义自然（`
 
@@ -337,7 +337,7 @@ pub fn split_message(text: &str, config: &ChunkConfig) -> Vec<String> {
 
 切割之后的清洗也值得单独看：`trim_end()` 只作用于块尾，`trim_start_matches('\n')` 吃掉交界处累积的换行，然后「最多跳过一个前导空格、但两个空格不动」（coalesce.rs:76-78）。两个空格在 Markdown 里意味着硬换行，跳过它会改变渲染语义；只跳一个空格是在「块间视觉干净」和「不破坏格式」之间取的折中。
 
-#### 11.4.2 去重与 Coalescing 的关系
+##### 去重与 Coalescing 的关系
 
 Coalescing 解决「一条太长」，去重解决「一条收到两次」。Webhook 类平台（飞书、Twilio、企业微信）在超时重试时可能投递同一事件多次，`MessageDedup` 用容量 1,000、TTL 60 秒的 LRU 缓存记录已见过的消息 ID（`../octos/crates/octos-bus/src/dedup.rs:12-25`；`is_duplicate` 在 42-61 行）。Discord 网关重连后重放事件，也在 `discord_channel.rs:32` 挂了同一个实例。两个机制正交：去重发生在 inbound 入口，切割发生在 outbound 出口，各管一段。入口不去重，一条重复消息会被切割成两倍量的块；出口不切割，任何一条超限消息直接被平台 API 拒收。
 
