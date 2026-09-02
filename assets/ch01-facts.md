@@ -181,7 +181,7 @@ done; done
 
 ### 3.3 workspace members 原文(佐证)
 
-根 `Cargo.toml`(共 39 个成员,按原文顺序):octos-core, octos-diagnostics, octos-memory, octos-llm, octos-agent, octos-bus, octos-workflows, octos-server, octos-store, octos-services, octos-cli, app-skills/{news, deep-search, deep-crawl, send-email, account-manager, time, weather, smart-home, wechat-bridge, skill-evolve, harness-starter-generic, harness-starter-report, harness-starter-audio, harness-starter-coding}, platform-skills/voice, octos-dora-mcp, octos-pipeline, octos-plugin, octos-sandbox, octos-swarm, octos-fleet, octos-fleet-worker, octos-embed-llama, octos-ffi, octos-uniffi, octos-wasm, octos-pyo3。
+根 `Cargo.toml`(共 38 个成员,按原文顺序):octos-core, octos-diagnostics, octos-memory, octos-llm, octos-agent, octos-bus, octos-workflows, octos-server, octos-store, octos-services, octos-cli, app-skills/{news, deep-search, deep-crawl, send-email, account-manager, time, weather, smart-home, wechat-bridge, skill-evolve, harness-starter-generic, harness-starter-report, harness-starter-audio, harness-starter-coding}, platform-skills/voice, octos-dora-mcp, octos-pipeline, octos-plugin, octos-sandbox, octos-swarm, octos-fleet, octos-fleet-worker, octos-embed-llama, octos-ffi, octos-uniffi, octos-wasm, octos-pyo3。
 octos-web **不在** members 中(grep 退出码 1)。
 注:26 个 `ls crates` 顶层条目中,app-skills/platform-skills 是多 crate 目录(合计 15 个成员 crate),octos-web 不是成员;26(目录)= 23 octos-* + 2 技能目录 + 1 前端目录。
 
