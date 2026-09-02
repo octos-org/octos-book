@@ -186,7 +186,7 @@ herdr pane run <pane> 'cd <repo> && claude --dangerously-skip-permissions'
 
 观测上行有三层,缺一不可(`octoscode/docs/OLP_OUTER_BOOT.md` 第 3 节,`:60` 至 `:72`):第一层现场屏幕,`herdr pane read <pane>`;第二层事件流,`tail -f .../data/events.jsonl`,看 steer_consumed、escalation、goal_transition 等事件;第三层结构面,`octos goal status` 与 `octos peer list`。文档的口吻来自教训:投递不等于消费,消费不等于执行,只看一层必误判。三层分别回答三个问题:屏幕说「它现在长什么样」,事件流说「协议上发生了什么」,结构面说「goal 与 peer 的账对不对」。
 
-双哨是重启硬清单的第三步:正信号哨盯 ACK 落板,负信号哨盯 events.jsonl 里的 `goal_transition blocked` 与 escalation。只挂正哨时,goal 熔断的沉默与「还在干活」不可区分;负哨补的正是这块盲区。双哨的状态空间:
+双哨是重启硬清单的第三步:正信号哨盯 ACK 落板,负信号哨盯 events.jsonl 里的 `goal_transition blocked` 与 escalation。只挂正哨时,goal 熔断的沉默与「还在干活」不可区分;负哨补的正是这块盲区。events.jsonl 这条负哨链还有一层运维语义要写明:文件按实例与 profile 分目录存放(路径形如 `~/.octos/instances/<实例>/profiles/<档>/data/events.jsonl`),实例名是项目 cwd 的哈希,不想要就 `ls -t ~/.octos/instances/` 按修改时间对号;哨进程死了不会有人替你重启,文件也不保证永久保留,所以负哨的正确形态是「重挂载时可追认」的 tail,而不是「假设无断档」的解析器——外环自己的存活,同样要在重启硬清单里核对。双哨的状态空间:
 
 ```mermaid
 stateDiagram-v2
@@ -207,7 +207,7 @@ stateDiagram-v2
 
 第二个坑是平台差异:OLP 的主审权锁(outer-duty)依赖 flock 与 PDEATHSIG,是 Linux-only,macOS 上不编译,多外环并存退回值班簿纪律层(第 20 章已展开,`octoscode/docs/OLP_OUTER_BOOT.md` 第 3.5 节)。这不是 herdr 的缺陷,而是整条工具链的平台边界:在 mac 上跑双环,主审互斥靠约定不靠锁。
 
-第三个坑在安装侧:首启自动下载 octos server 失败,多半是离线或代理问题,手装 `npm i -g @octos-org/octos`,设 `OCTOSCODE_NO_AUTO_INSTALL=1` 关自动安装(`octoscode/docs/OLP_QUICKSTART.md` 第 6 节故障表)。同表还有一条 Linux 专属:构建大项目时链接器 SIGBUS 或 EDQUOT,是 tmpfs 配额问题,把 TMPDIR 指到 home 盘。第四个坑是版本:octoscode 识别在 fork 分支,`--kind octoscode` 用了上游 master 构建的 herdr 会静默不识别,窗格状态永远是 unknown,冒烟那步 `octoscode | <pane> | idle` 过不去,顺着这条症状反查最快。
+第三个坑在安装侧:首启自动下载 octos server 失败,多半是离线或代理问题,手装 `npm i -g @octos-org/octos`,设 `OCTOSCODE_NO_AUTO_INSTALL=1` 关自动安装(`octoscode/docs/OLP_QUICKSTART.md` 第 6 节故障表,源头在 `octoscode/src/backend_ensure.rs:60` 的 `OPT_OUT_ENV`)。同表还有一条 Linux 专属:构建大项目时链接器 SIGBUS 或 EDQUOT,是 tmpfs 配额问题,把 TMPDIR 指到 home 盘。第四个坑是版本:octoscode 识别在 fork 分支,`--kind octoscode` 用了上游 master 构建的 herdr 会静默不识别,窗格状态永远是 unknown,冒烟那步 `octoscode | <pane> | idle` 过不去,顺着这条症状反查最快。这个坑的教训在于「静默降级」的代价:上游构建的 herdr 对 octoscode 窗格照常分配 PTY、照常回显画面,唯一缺席的是识别——没有安装警告,没有版本协商,没有 unknown 状态的告警旗。运维者若先跑 `herdr agent prompt` 而不是 `herdr agent list`,第一反馈会是 agent_not_ready,很容易误判成四道门里的进程匹配问题,在双重门上白耗排查时间。规避办法是把依赖表那句「从 feat/octoscode-agent 分支构建」(`octoscode/docs/OLP_QUICKSTART.md:35`)写进环境准备清单,并约定:合入 master 的日子就是全机重装 herdr 的日子。
 
 排查这些坑时,`herdr agent explain`(`herdr/src/cli/agent.rs:41`,usage `:91`)与 `pane read --source detection` 是两件趁手工具:前者解释窗格为什么被判成当前状态,后者直接给出 detect 引擎的原始裁决,把「识别错了」与「画面真的变了」区分开。CLI 的完整入口表可以随时用 `herdr agent help` 打印,帮助总表硬编码在 `print_agent_help`(`herdr/src/cli/agent.rs:922`,正文 `:923` 至 `:941`);报错信息也带路:任何一个子命令参数敲错,usage 字符串原样回显(usage 行与源码逐字一致,本章引用的 usage 全部来自事实表的 sed 抽查),照着改就行。
 

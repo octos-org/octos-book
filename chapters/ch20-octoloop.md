@@ -129,6 +129,8 @@ flowchart LR
 
 平台边界不藏着:`octoscode/docs/OCTOLOOP_GUIDE.md:221` 的矩阵写明 Linux 全功率(`:227`),macOS 两缺口(`:229`),其一就是 outer-duty 不可用,多外环协作退回值班簿纪律层加 operator 裁决;值班簿在任何平台都只是提示性目录,不构成所有权。macOS 的进程收割(reaper)方案已立项,需求文件在 octoscode 仓 `knowledge/requirements/req-olp-duty-macos.md`。当前切片的 fencing 只到文档层纪律,写入面校验 lease 的硬 gate 是后续条目。
 
+回退到值班簿之后,运维手法要跟着换。Linux 上外环上岗前跑一次 `outer-duty check` 就能拿到机器裁定的 VACANT 或 HELD,macOS 上这个动作消失,替代物只有三个弱信号:黑板最近条目的署名、herdr 窗格的进程与闲置状态、以及值班簿里的登记时间。三者都可能是陈旧的——`octoscode/docs/OCTOLOOP_GUIDE.md:233` 把话说死:值班簿在任何平台都只是提示性目录,不构成所有权。因此 macOS 的多外环协作实际靠两条纪律撑住:每个进行中条目单一主审,他人只署名批注;交接班必须经 operator 显式确认,旧主审先在黑板写明离场与交接对象,新主审才能接手。锁没了,裁定权从 OS 层上收到 operator 层,这是 R7 平台矩阵的完整含义。
+
 ## 20.6 octos 侧落点:预算与四个观测 CLI
 
 协议文本大部分落在 octoscode 仓,但外环真正要观测和驱动的对象在 octos 主仓。交叉面四个 CLI 加一个预算落点。`crates/octos-cli/src/commands/steer.rs:1` 头注释自证身份:`octos steer — external reviewer steer channel (OLP P2, slice 1)`,`STEER_MAX_BYTES`(`:22`)限 64KB,超限入队即拒,走 `.reviewer-notes` sidecar、user-message 层级而非系统指令。`crates/octos-cli/src/commands/ledger.rs:1` 头注释同样自证:`octos ledger tail — read-only goal-ledger tail (OLP L1, slice 4)`,外环用它审计 master 的 decisions 与 escalations 表(R3 的裁决审计面)。`crates/octos-cli/src/commands/peer.rs` 的 `list_peers`(`:54`)与 `crates/octos-cli/src/commands/goal.rs` 的 `GoalStatusArgs`(`:340`)构成 L1 只读观测三件套。
