@@ -149,7 +149,7 @@ sequenceDiagram
 
 ## 16.4 状态机与恢复协调
 
-三层状态各管一段:fleet 整体是 `FleetStatus`(Active / Draining / Complete / Failed,crates/octos-fleet/src/records.rs:41);子任务是 `ChildStatus`(Planned / Ready / Launching / Running / Blocked / Succeeded / Failed / Cancelled,crates/octos-fleet/src/records.rs:64);尝试是 `AttemptStatus`(Leased / Running / Done / Interrupted,crates/octos-fleet/src/records.rs:94)。`Blocked` 是 PR B 加入的非终态:attempt 让位去请求更宽的授权,等 keeper 决断(16.5)。
+三层状态各管一段:fleet 整体是 `FleetStatus`(Active / Draining / Complete / Failed / Cancelled,crates/octos-fleet/src/records.rs:41-47);子任务是 `ChildStatus`(Planned / Ready / Launching / Running / Blocked / Succeeded / Failed / Cancelled,crates/octos-fleet/src/records.rs:64);尝试是 `AttemptStatus`(Leased / Running / Done / Interrupted,crates/octos-fleet/src/records.rs:94)。`Blocked` 是 PR B 加入的非终态:attempt 让位去请求更宽的授权,等 keeper 决断(16.5)。
 
 ```mermaid
 stateDiagram-v2
