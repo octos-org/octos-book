@@ -1,10 +1,10 @@
 # 第 3 章：octos-llm：驯服 LLM Provider 的混乱
 
-> **定位**：本章深入 octos-llm crate，展示如何用 Rust trait 抽象统一多种 LLM Provider 的混乱接口，以及如何构建三层容错链实现生产级可靠性。前置依赖：第 2 章。适用场景：想理解多 Provider 架构设计的 AI 应用开发者（读者 C），以及对 trait object、异步容错、凭据轮换和模型分层路由感兴趣的 Rust 开发者（读者 B）。
+> **定位**：本章深入 octos-llm crate，展示如何用 Rust trait 抽象统一多种 LLM Provider 的混乱接口，以及如何用三级容错能力与两级装配实现生产级可靠性。前置依赖：第 2 章。适用场景：想理解多 Provider 架构设计的 AI 应用开发者（读者 C），以及对 trait object、异步容错、凭据轮换和模型分层路由感兴趣的 Rust 开发者（读者 B）。
 
 每个 LLM Provider 都有自己的 API 风格：Anthropic 把 system message 作为独立字段，OpenAI 把它放在消息数组里；Gemini 的工具调用格式与其他两家完全不同；Ollama 虽然是本地部署，但在 octos 里复用了 OpenAI 兼容接入层。当你需要同时支持少数专用协议实现，再加上一批复用 OpenAI / Anthropic 兼容层的 Provider 时，混乱是不可避免的——除非你在正确的层次建立正确的抽象。
 
-octos-llm 的解决方案分三层：底层的 `LlmProvider` trait 统一调用接口，中层的 Provider 注册表实现模型名自动检测和工厂创建，顶层的三级容错链（RetryProvider → ProviderChain → AdaptiveRouter）提供生产级可靠性。当前主分支还把 provider metadata、HTTP timeout knobs、credential pool、content classifier 和 `routing.decision` 事件纳入这条链路。本章将自底向上逐层展开。
+octos-llm 的解决方案自底向上分三块：底层的 `LlmProvider` trait 统一调用接口，中层的 Provider 注册表实现模型名自动检测和工厂创建，顶层的容错装配提供生产级可靠性：每个 Provider 恒包一层 RetryProvider，外层再按配置二选一套上 ProviderChain（静态有序故障转移，缺省）或 AdaptiveRouter（评分路由，需显式 opt-in，替换而非叠加）。当前主分支还把 provider metadata、HTTP timeout knobs、credential pool、content classifier 和 `routing.decision` 事件纳入这条链路。本章将自底向上逐层展开。
 
 ---
 
@@ -76,16 +76,19 @@ Provider metadata。 `provider_metadata()` 与 `provider_metadata_for_index()` �
 
 ### 3.1.2 核心数据类型
 
-`ChatConfig`（`../octos/crates/octos-llm/src/config.rs`）封装了所有可调参数：
+`ChatConfig`（`../octos/crates/octos-llm/src/config.rs:8-70`）封装单次请求的全部可调参数：
 
-- `model`: 模型 ID
-- `temperature`: 采样温度
 - `max_tokens`: 最大输出 token 数
-- `system_prompt`: 系统提示
-- `response_format`: 响应格式约束（文本/JSON/结构化输出）
+- `temperature`: 采样温度（Anthropic 协议路径上 `Some(0.0)` 视为未设置，不上 wire）
 - `tool_choice`: 工具选择策略（auto/required/none/指定工具）
-- `cache_retention`: 单次请求的 prompt-cache 保留偏好（`None` 表示这一次不写缓存，见 3.6 节）
-- `sampling_params`: 运营者透传的额外采样参数表（见下文）
+- `stop_sequences`: 停止序列
+- `reasoning_effort`: 思考模型的推理力度（none/low/medium/high/max，映射到 OpenAI reasoning.effort、Anthropic thinking budget、Gemini thinkingConfig）
+- `response_format`: 响应格式约束（文本/JSON/结构化输出）
+- `context_management`: Anthropic 专有的不透明 payload（如 `clear_tool_uses_20250919`），让服务端做 tier-2 工具调用清理，其他 provider 忽略
+- `sampling_params`: 运营者透传的额外采样参数表（机制见下文）
+- `cache_retention`: 单次请求的 prompt-cache 保留偏好（`None` 表示这一次不写缓存，机制见 3.6 节）
+
+这份清单刻意没有 `model` 和 `system_prompt` 两个看似必然的字段：model 在 provider 构造期由注册表工厂决定（见 3.2.3），system prompt 走 `messages` 数组（正是本章开头强调的各家协议差异点）。`sampling_params` 与 `cache_retention` 的完整机制分别展开于本小节下文与 3.6 节。
 
 `ChatResponse` 包含 LLM 返回的完整信息：内容、stop reason、工具调用请求、token 使用量。`ChatStream` 是一个异步流（`Pin<Box<dyn Stream<Item = Result<StreamEvent>>>>`），逐事件产出流式响应。
 
@@ -177,37 +180,34 @@ Anthropic、OpenAI、Gemini 使用专用实现；其余多数条目通过兼容�
 
 ---
 
-## 3.3 三层容错链
+## 3.3 容错链：三级能力与两级装配
 
-生产环境中，LLM API 调用可能因为多种原因失败：速率限制（429）、服务器过载（503/529）、认证失效（401）、网络超时。octos-llm 用三层容错链处理这些故障，每一层解决不同级别的问题。
+生产环境中，LLM API 调用可能因为多种原因失败：速率限制（429）、服务器过载（503/529）、认证失效（401）、网络超时。octos-llm 把容错拆成三级能力、两级装配：RetryProvider 处理单个 Provider 的瞬时故障，是每个 slot 恒备的基座；其外的装配层二选一：ProviderChain 做静态有序故障转移（缺省装配），或 AdaptiveRouter 做评分路由（`adaptive_routing.enabled` 显式 opt-in，替换而非叠加 chain）。生产装配点在 `../octos/crates/octos-cli/src/qos_catalog.rs:305-352`。
 
 ```mermaid
 flowchart TD
-    Request["用户请求"] --> AR["AdaptiveRouter<br/>EMA 评分选择最优 Provider"]
-    AR --> PC1["ProviderChain #1<br/>带 Circuit Breaker"]
-    AR --> PC2["ProviderChain #2<br/>带 Circuit Breaker"]
-    AR -.->|"hedge racing"| PC2
+    Request["用户请求"] --> Sel{"adaptive_routing.enabled？<br/>（缺省 false）"}
+    Sel -->|"false / 未配置"| PC["ProviderChain<br/>静态有序故障转移"]
+    Sel -->|"true（显式 opt-in）"| AR["AdaptiveRouter<br/>EMA 评分路由 / 对冲竞赛"]
+    PC --> RP1["RetryProvider<br/>（Provider A）"]
+    PC -->|"failover"| RP2["RetryProvider<br/>（Provider B）"]
+    AR -->|"评分选中"| RP1
+    AR -.->|"hedge racing / 探针"| RP2
+    RP1 --> LLM_A["Anthropic API"]
+    RP2 --> LLM_B["OpenAI API"]
 
-    PC1 --> RP1a["RetryProvider (Provider A)<br/>指数退避 429/5xx"]
-    PC1 -->|"failover"| RP1b["RetryProvider (Provider B)<br/>指数退避 429/5xx"]
-
-    PC2 --> RP2a["RetryProvider (Provider C)<br/>指数退避 429/5xx"]
-
-    RP1a --> LLM_A["Anthropic API"]
-    RP1b --> LLM_B["OpenAI API"]
-    RP2a --> LLM_C["Gemini API"]
-
-    style AR fill:#f9f,stroke:#333
-    style PC1 fill:#bbf,stroke:#333
-    style PC2 fill:#bbf,stroke:#333
-    style RP1a fill:#bfb,stroke:#333
-    style RP1b fill:#bfb,stroke:#333
-    style RP2a fill:#bfb,stroke:#333
+    style Sel fill:#f9f,stroke:#333
+    style PC fill:#bbf,stroke:#333
+    style AR fill:#bbf,stroke:#333
+    style RP1 fill:#bfb,stroke:#333
+    style RP2 fill:#bfb,stroke:#333
 ```
 
-图 3-1：三层容错链架构。 请求从 AdaptiveRouter 进入，经 ProviderChain 路由到具体 Provider，每个 Provider 包裹在 RetryProvider 中处理瞬时故障。
+图 3-1：容错链的装配结构。 providers 向量的每个元素已是 RetryProvider 包装的 slot；外层按 `adaptive_routing.enabled` 二选一：缺省回退到静态 ProviderChain，显式 opt-in 才换成 AdaptiveRouter（替换而非叠加）。断路器也是两套独立的：ProviderChain 用 `ProviderSlot.failures`（failover.rs），AdaptiveRouter 用自己的 per-slot circuit breaker（adaptive.rs:1036 一带）。
 
-### 3.3.1 第一层：RetryProvider — 指数退避
+装配点的源码事实：`qos_catalog.rs:305-352` 是唯一的分叉处，`gateway/profile_factory.rs:363,413`、`commands/chat.rs:1210`、`tools/switch_model.rs:289` 全部是 `ProviderChain::new(vec![RetryProvider...])`，不存在 AdaptiveRouter 内嵌多个 ProviderChain 的路径。
+
+### 3.3.1 基座：RetryProvider — 每个 Provider 恒包的指数退避
 
 RetryProvider（`../octos/crates/octos-llm/src/retry.rs:41-312`）处理单个 Provider 的瞬时故障。
 
@@ -222,7 +222,7 @@ fn calculate_delay(&self, attempt: u32) -> Duration {
 }
 ```
 
-默认配置（`retry.rs:28-37`）：最多重试 3 次，初始延迟 1 秒，退避乘数 2.0，最大延迟 60 秒。实际退避序列为 1s → 2s → 4s → 8s（但被 60s 上限钳位）。
+默认配置（`retry.rs:28-37`）：最多重试 3 次，初始延迟 1 秒，退避乘数 2.0，最大延迟 60 秒。重试循环是 `for attempt in 0..=max_retries`（`retry.rs:322`，流式版同构），且仅当还有重试额度（`attempt < max_retries`）且错误可重试时才计算延迟并 sleep。因此默认退避序列实际是 1s → 2s → 4s，共三次等待，第 4 次调用失败后直接向上抛错；`2^3 = 8s` 那一档在循环里走不到，60 秒钳位对默认指数序列同样永不触达，它只在运营者调大退避参数、或 429 解析出超过 60 秒的 retry-after 时才生效。
 
 哪些错误可重试？（`retry.rs:107-147`）
 
@@ -241,7 +241,7 @@ fn calculate_delay(&self, attempt: u32) -> Duration {
 
 速率限制解析（`retry.rs:267-311`）：当收到 429 响应时，RetryProvider 会尝试从错误消息中解析推荐的等待时间（如 "Please try again in 29.159s"），加上 1 秒缓冲后等待。如果无法解析，回退到 30 秒固定等待。
 
-### 3.3.2 第二层：ProviderChain — 有序故障转移
+### 3.3.2 装配选项 A：ProviderChain — 静态有序故障转移（缺省）
 
 ProviderChain（`../octos/crates/octos-llm/src/failover.rs:36-249`）管理一组 Provider 的故障转移顺序。
 
@@ -264,9 +264,9 @@ struct ProviderSlot {
 
 延迟故障上报（`failover.rs:378`）：`report_late_failure()` 处理一种微妙的场景：Provider 返回了 200 响应，但流式解析后发现内容为空或格式错误。这时需要回溯性地惩罚该 Provider，增加其失败计数，让后续请求优先选择其他 Provider。
 
-### 3.3.3 第三层：AdaptiveRouter — EMA 评分与对冲竞赛
+### 3.3.3 装配选项 B：AdaptiveRouter — EMA 评分与对冲竞赛（显式 opt-in）
 
-AdaptiveRouter（`adaptive.rs:803` 起的 struct，inherent impl 延伸至文件尾 2795 行）是容错链的最高层，实现了智能路由。
+AdaptiveRouter（`adaptive.rs:803` 起的 struct，inherent impl 延伸至文件尾 2795 行）是与 ProviderChain 同位的另一个装配选项：opt-in 时它接收的 providers 向量与 chain 本会是同一个（每个元素已包 RetryProvider），在其上做评分路由，而不是在 chain 外再叠一层。
 
 三种模式（`adaptive.rs:619-631`）：
 
@@ -497,7 +497,7 @@ local_context_probe.rs（本地窗口探测，#2135）。 提交 10022387 引入
 
 ---
 
-## 3.6 本章回顾
+## 3.8 本章回顾
 
 octos-llm 解决了 LLM Provider 集成的核心挑战：
 
@@ -505,10 +505,10 @@ octos-llm 解决了 LLM Provider 集成的核心挑战：
 
 2. Provider 注册表：模型名子串匹配自动检测 Provider，工厂模式动态创建 `Arc<dyn LlmProvider>` 实例。特殊处理 O 系列模型的前缀匹配，并明确把 R9s、OpenRouter、Z.AI、NVIDIA、Ollama、vLLM 这类 `detect_patterns` 为空的 Provider 留给显式 provider / alias 选择。
 
-3. 三层容错链：
+3. 容错链（三级能力、两级装配）：
    - RetryProvider：指数退避（1s→2s→4s），智能解析 429 响应的 retry-after 头
-   - ProviderChain：有序故障转移 + circuit breaker（3 次连续失败触发降级）
-   - AdaptiveRouter：四因子 EMA 评分（稳定性 30% + 质量/吞吐 30% + 优先级 20% + 成本 20%）+ 对冲竞赛 + 探针策略
+   - ProviderChain：有序故障转移 + circuit breaker（3 次连续失败触发降级），缺省装配
+   - AdaptiveRouter：四因子 EMA 评分（稳定性 30% + 质量/吞吐 30% + 优先级 20% + 成本 20%）+ 对冲竞赛 + 探针策略，需显式 opt-in，替换而非叠加 chain
 
 4. Credential pool 与 content classifier：429/auth failure 会进入凭据 cooldown / refresh 路径；content classifier 发出 `routing.decision` 事件，把 Cheap/Strong tier 的选择暴露给 harness。
 
@@ -532,7 +532,7 @@ octos-llm 解决了 LLM Provider 集成的核心挑战：
 
 ## 思考题
 
-1. 容错层次设计：octos 的三层容错链中，如果把 RetryProvider 和 ProviderChain 合并为一层会怎样？分离的好处是什么？
+1. 容错层次设计：octos 的容错装配中，如果把 RetryProvider 的重试职责合并进 ProviderChain（chain 直接管理裸 Provider 并自己做退避）会怎样？分离的好处是什么？
 
 2. 对冲竞赛的成本模型：假设你有两个 Provider：Provider A 价格 $10/M tokens、平均延迟 500ms；Provider B 价格 $3/M tokens、平均延迟 1500ms。在什么条件下开启 hedge racing 是划算的？
 
@@ -543,4 +543,4 @@ octos-llm 解决了 LLM Provider 集成的核心挑战：
 ---
 
 > 版本演化说明
-> 本章分析基于 `../octos` main @ 9c157101（2026-09-02）。本次修订要点：① 注册表从 15 个 Provider 重列为 19 个 provider family（新增 vertex、moonshot-coding、zai-coding、local），注册叙事改为 registry/ 目录 + `discovery.rs:134` 的模型发现协议，不再出现 `enum Provider`；② trait 补入 `ensure_ready()` 与 `estimate_request_tokens()`，`provider_metadata_for_index` 签名改为 `Option<usize>`；③ timeout 叙事改讲 `CreateParams::http_timeout()` 与 `DEFAULT_LLM_STREAM_IDLE_TIMEOUT_SECS`；④ 新增 3.6「成本层」（cache 经济学，提交 f3aa07f0）与 3.7「车道与路由」（六个调度件模块与 10022387 本地窗口探测）；⑤ sampler passthrough（b0072e70）与 per-profile context_window 覆盖（3e479ce3，接线主体在 octos-cli）写入 3.1.2；⑥ 全部引用行号按 9c157101 逐条重标（adaptive.rs 已扩至 2795 行，catalog.rs 勘误为 274 行，见 assets/ch03-refcheck.md）。Provider 注册表与评分权重可能继续调整，但三层容错架构仍是理解 octos-llm 的主线。
+> 本章分析基于 `../octos` main @ 9c157101（2026-09-02）。本次修订要点：① 注册表从 15 个 Provider 重列为 19 个 provider family（新增 vertex、moonshot-coding、zai-coding、local），注册叙事改为 registry/ 目录 + `discovery.rs:134` 的模型发现协议，不再出现 `enum Provider`；② trait 补入 `ensure_ready()` 与 `estimate_request_tokens()`，`provider_metadata_for_index` 签名改为 `Option<usize>`；③ timeout 叙事改讲 `CreateParams::http_timeout()` 与 `DEFAULT_LLM_STREAM_IDLE_TIMEOUT_SECS`；④ 新增 3.6「成本层」（cache 经济学，提交 f3aa07f0）与 3.7「车道与路由」（六个调度件模块与 10022387 本地窗口探测）；⑤ sampler passthrough（b0072e70）与 per-profile context_window 覆盖（3e479ce3，接线主体在 octos-cli）写入 3.1.2；⑥ 全部引用行号按 9c157101 逐条重标（adaptive.rs 已扩至 2795 行，catalog.rs 勘误为 274 行，见 assets/ch03-refcheck.md）。Provider 注册表与评分权重可能继续调整。本轮修复（C2 报告 assets/ch03-techreview.md 裁定项）：⑦ 容错链叙事改为三级能力与两级装配（mermaid 图改为二选一分支，AdaptiveRouter 与 ProviderChain 同位替换而非嵌套）；⑧ ChatConfig 字段清单按 config.rs:8-70 重列（删去不存在的 model/system_prompt，补入 stop_sequences、reasoning_effort、context_management）；⑨ 退避序列更正为 1s → 2s → 4s（8s 档位与 60s 钳位在默认序列下不可达）；⑩ 本章回顾由重号的 3.6 改为 3.8。容错能力的三级递进仍是理解 octos-llm 的主线。
