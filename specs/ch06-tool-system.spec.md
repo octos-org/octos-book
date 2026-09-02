@@ -1,131 +1,101 @@
 spec: task
-name: "Ch6. 工具系统：分层注册与工具治理"
+name: "Ch6. 工具系统:按能力域组织的 59 个工具源文件(v2 重写)"
 inherits: project
-tags: [part2, tools, policy, lru, registry]
+tags: [part2, tools, registry, policy, rewrite-v2]
 depends: [ch05-agent-loop]
-estimate: 1.5d
+estimate: 2d
 ---
 
 ## 意图
 
-工具系统是 Agent 与外部世界交互的唯一通道。本章要基于当前源码解释
-`Tool` trait、ToolRegistry 的分层注册、ToolPolicy 的 deny-wins 语义、
-工具曝光控制的混合策略，以及参数与文件访问安全，重点是让读者理解
-"哪些工具在什么模式下出现、为什么这样治理"，而不是记忆一个过时的固定数量。
+重写第 6 章。旧稿「14 个内置工具 + LRU 淘汰」的骨架已不成立:`crates/octos-agent/src/tools/`
+在 2026-09-02 有 59 个源文件,LRU 工具延迟激活在 RFC-0(`172fb2be`,#1289)中连同
+`activate_tools.rs` 一并删除,只保留 `spawn_only` 自动后台化。本章改为按能力域讲工具家族,
+再讲 `Tool` trait、`ToolRegistry` 的三种构造与六处注册路径、`ToolPolicy` 的 deny-wins 语义、
+参数与路径安全,以及 `write_grant` / `read_window` / `recall` 这类新增治理工具。Ch16 的封闭
+注册表与 Ch18 的 goal/peer 工具都建立在本章的注册与策略语义上。
 
 ## 决策
 
-- 以 `../octos/crates/octos-agent/src/tools/registry.rs` 中的 `with_builtins_and_permissions()` 作为基础工具层锚点
-- 明确覆盖 `../octos/crates/octos-cli/src/api/coding_tool_contract.rs` 中的 `coding.tool_contract.v1`、P0 required tools、tool status 和 capability 词汇
-- 明确区分基础注册、配置注入、chat 追加、gateway 追加、per-session 追加五层注册路径
-- `Tool` trait 以当前真实签名为准：`name`、`description`、`input_schema`、`tags`、`execute`、`as_any`
-- `ToolPolicy` 必须覆盖 `allow` / `deny` / `require_tags` 三维，并区分 `apply_policy` 与 `set_provider_policy`
-- 工具曝光控制按当前实现解释为"预延迟 + LRU + execute 时自动激活"，`spawn_only` 单独讲，不混入 deferred 语义
-- Provider 级配置字段使用 `tool_policy_by_provider`，匹配顺序为精确 model ID 优先，其次 provider 名
-- 安全部分同时覆盖 `estimate_json_size`、`resolve_path`、`read_no_follow` / `write_no_follow`
-- 图表与侧栏都服务于解释当前混合治理策略，不把系统简化成"纯 LRU"
+- 事实表先行: `assets/ch06-facts.md` 列出 tools/ 下 59 个源文件的首行 `//!` 文档、每个工具的 `fn name()` 返回值、所属能力域、行数与生成命令;正文工具名与分组只准取自事实表
+- 能力域分组(以事实表核实为准,允许微调归属): 文件读写(read_file、read_window、write_file、edit_file、diff_edit、apply_patch、write_grant、replacer)/ 代码检索(glob_tool、grep_tool、code_structure)/ 执行与版本控制(shell、check、git、workspace_history、check_workspace_contract)/ 网络(web_fetch、web_search、site_crawl、deep_search、http、ssrf、research_utils、synthesize_research)/ 记忆(save_memory、recall_memory、memory_note、record_memory_use、recall)/ 委派与后台(spawn、delegate、mcp_agent、check_background_tasks、read_task_output、peer_handoff、peer_list、peer_gather、peer_respond、peer_send_input、peer_close)/ 通信(message、send_file、send_app_card、ask_user_question)/ 机器人(dora_bridge、robot_groups、mofa_make)/ 框架与治理(mod、registry、policy、args、tool_config、coding_tools、read_paging_probe、manage_skills、browser、admin)
+- `Tool` trait 以 `crates/octos-agent/src/tools/mod.rs` 当前真实签名为准;typed `ToolContext`(M8.1)取代 task-local 的迁移在 mod.rs 顶部文档,必须讲
+- 注册表: `ToolRegistry`(`registry.rs:127`)的 `with_builtins` / `with_builtins_and_sandbox` / `with_builtins_and_permissions`(`registry.rs:1243-1254` 附近)三种构造;`register_arc`、`apply_policy`(`registry.rs:869`)、`set_provider_policy`(`registry.rs:947`)
+- 注册路径六处(每处一段,附路径): profile roster(`crates/octos-agent/src/assets/profiles/coding.json` + `crates/octos-agent/src/profile/mod.rs`,`9ecc5845` 的 lean coding roster 与 `tool_search` 逃生口)、`crates/octos-cli/src/commands/chat.rs`、`crates/octos-cli/src/commands/acp.rs`、`crates/octos-cli/src/commands/gateway/gateway_runtime.rs`、`crates/octos-cli/src/session_actor.rs`、MCP `crates/octos-agent/src/mcp.rs:532` 的 `register_tools`
+- 曝光控制: 明确写「LRU 延迟已删除」并引用 `172fb2be`;`spawn_only`(`registry.rs:156-194` 附近)单独一节;不得复述旧稿的 `find_evictable` / `ToolLifecycle`
+- 策略: `ToolPolicy { allow, deny, require_tags }`(`policy.rs:28-40`)、deny-wins、通配与分组;provider 级 `tool_policy_by_provider` 匹配顺序以当前源码为准
+- 编码工具契约: `crates/octos-cli/src/api/coding_tool_contract.rs` 的 `coding.tool_contract.v1`、P0 required tools、tool status 词汇
+- 新增治理工具三例: `write_grant.rs`(#1976 按路径写授权)、`read_window.rs`(#1638 窗口化读取,默认关闭)、`recall.rs`(#2131 重新物化被压缩替换的工具输出,与 Ch8 呼应)
+- 安全: `args.rs` 的 `estimate_json_size` 与 1MB 上限、`resolve_path`、`read_no_follow` / `write_no_follow`、`ssrf.rs`;以当前源码行号为准
+- 图表: 能力域工具家族图、注册路径六层叠加图、`ToolPolicy` 判定流程图、`spawn_only` 自动后台化时序
+- 工程决策侧栏: 为什么删掉 LRU 延迟激活(RFC-0 的取舍)
+- 镜像同步: `book/src/part2/ch06.md` 与 `chapters/ch06-*.md` 内容一致
+- 分析基线: octos main @ 9c157101
 
 ## 边界
 
 ### 允许修改
 - octos-book/chapters/ch06-*.md
 - octos-book/book/src/part2/ch06.md
-- octos-book/book-en/src/part2/ch06.md
-- octos-book/specs/ch06-*.spec.md
 - octos-book/assets/ch06-*
 
 ### 禁止做
-- 不深入沙箱执行细节（Ch7 覆盖）
-- 不逐个讲解每个工具的完整实现（只选代表性机制）
-- 不把 `tools/mod.rs` 的导出列表当成默认注册表
+- 不讲沙箱后端(Ch7)、压缩算法(Ch8)、MCP 客户端迁移细节(Ch9)、fleet 封闭注册表(Ch16)
+- 不修改 octos 源码仓库
+- 不保留旧稿中已删除机制(LRU、activate_tools、find_evictable、ToolLifecycle)的任何描述,除非明确标注为「已删除」的历史
 
 ## 排除范围
 
-- MCP 外部工具集成（Ch9 覆盖）
-- Plugin 二进制工具协议细节（Ch9 覆盖）
-- 浏览器工具内部自动化细节
+- 单个工具的完整参数手册(附录 B)
+- 沙箱与权限模型(Ch7)
 
 ## 完成条件
 
-场景: Tool trait 与扩展点
-  测试: review_ch06_tool_trait
-  当 阅读 Tool trait 小节
-  那么 展示了当前 `Tool` trait 的真实方法集合
-  并且 解释了 `ToolResult` 的结构
-  并且 说明了 `execute_with_context()`、`tags()`、`as_any()` 与 `concurrency_class()` 的职责
+场景: 事实表可复现
+  测试: review_ch06_facts_sheet
+  假设 `assets/ch06-facts.md` 已生成
+  当 逐条重跑其中记录的命令
+  那么 59 个源文件的首行文档与行数与命令输出一致
+  并且 每个工具的 `fn name()` 返回值与事实表一致
 
-场景: ToolRegistry 的分层注册
-  测试: review_ch06_registry_layers
-  当 阅读注册机制小节
-  那么 解释了 `with_builtins_and_permissions()` 当前注册传统工具层、Codex-compatible coding 工具层、动态工具发现和 typed unsupported stub
-  并且 区分了配置注入、chat 追加、gateway 追加、per-session 追加
-  并且 明确说明 `tools/mod.rs` 导出列表不等于默认注册表
+场景: 能力域分组覆盖全部工具
+  测试: review_ch06_domain_grouping
+  当 阅读能力域小节
+  那么 事实表里每个工具都被归入恰一个能力域
+  并且 每个能力域至少一处源码引用
 
-场景: Codex-compatible coding 工具面
-  测试: review_ch06_coding_tool_contract
-  当 阅读注册机制和工具合约小节
-  那么 列出 `apply_patch`、`exec_command`、`write_stdin`、`update_plan`、`request_user_input`、`spawn_agent`、`send_input`、`resume_agent`、`wait_agent`、`close_agent` 这些 P0 required tools
-  并且 说明 `bash`、`delegate`、`view_image`、`tool_search`、`tool_suggest`、`image_generation` 的兼容层定位
-  并且 说明 `image_generation` 当前返回 typed unsupported 而不是已接入真实后端
-  并且 说明 model-visible `send_input` 当前不是实时子 Agent stdin，而是 supervisor metadata 记录
+场景: LRU 删除事实写明
+  测试: review_ch06_lru_removed
+  当 在正文检索 LRU、activate_tools、find_evictable、ToolLifecycle
+  那么 只出现在明确标注「已于 172fb2be 删除」的历史说明里
+  并且 `spawn_only` 小节引用 `registry.rs` 实际行号
 
-场景: 混合曝光控制
-  测试: review_ch06_activation_lru
-  当 阅读 LRU / 激活小节
-  那么 解释了 `defer_group()` 预延迟、15 个活跃槽位的 LRU、以及 `execute()` 中的自动激活
-  并且 说明了 `activate_tools` 是可选元工具而不是唯一入口
-  并且 解释了 LRU 状态是 per-session 的
+场景: 注册路径六处齐全
+  测试: review_ch06_registration_paths
+  当 阅读注册路径小节
+  那么 六处注册路径各有路径引用
+  并且 lean coding roster 与 `tool_search` 逃生口引用 `9ecc5845` 所改文件
 
-场景: spawn_only 语义独立
-  测试: review_ch06_spawn_only
-  当 阅读 `spawn_only` 相关说明
-  那么 明确说明它不属于 deferred / LRU 延迟池
-  并且 解释了主会话里的自动后台化
-  并且 说明当前优先向 LLM 返回 `task_handle` envelope 并通过 `read_task_output` 读取后台输出
-  并且 说明了 subagent 中 `clear_spawn_only()` 后按普通工具执行
-
-场景: ToolPolicy 三维过滤
+场景: 策略语义准确
   测试: review_ch06_policy
-  当 阅读 ToolPolicy 小节
-  那么 解释了 deny-wins 的评估逻辑
-  并且 展示了通配符匹配（`web_*`）的实现方向
-  并且 覆盖 `group:fs/runtime/web/search/sessions/memory/research/admin/media/delegated`
-  并且 `group:fs` 包含 `apply_patch`
-  并且 `group:runtime` 包含 `exec_command`、`write_stdin`、`bash`
-  并且 `group:sessions` 包含 `spawn_agent`、`send_input`、`resume_agent`、`wait_agent`、`close_agent`、`delegate`
-  并且 说明了 `require_tags` 与空标签工具的语义
+  当 阅读 `ToolPolicy` 小节与判定流程图
+  那么 allow / deny / require_tags 三维与 deny-wins 的说明能在 `policy.rs` 与 `registry.rs:869-947` 附近找到依据
+  并且 `apply_policy` 与 `set_provider_policy` 的区别写明
 
-场景: 并发调度语义
-  测试: review_ch06_concurrency_class
-  当 阅读工具执行小节
-  那么 解释了 `ConcurrencyClass::Safe` 与 `ConcurrencyClass::Exclusive`
-  并且 说明 safe batch 使用 `join_all` 并发执行，包含 exclusive 时走串行 admission
+场景: 新增治理工具有源码依据
+  测试: review_ch06_governance_tools
+  当 阅读 write_grant / read_window / recall 小节
+  那么 三者各引用对应文件行号与引入 issue 号
+  并且 `read_window` 写明默认关闭
 
-场景: Provider 级策略配置
-  测试: review_ch06_provider_policy
-  当 阅读 Provider 级策略小节
-  那么 使用 `tool_policy_by_provider` 作为配置字段
-  并且 说明了 model ID 优先、provider 名回退的匹配顺序
-  并且 区分了 `apply_policy()` 与 `set_provider_policy()` 的行为差异
+场景: 引用零失效
+  测试: review_ch06_refs_valid
+  当 提取正文全部 `crates/...rs:行号` 引用并对照当前源码
+  那么 每个路径存在
+  并且 每个行号区间不超过文件总行数
+  并且 区间内确实含所述符号
 
-场景: 参数与文件安全
-  测试: review_ch06_param_safety
-  当 阅读参数安全小节
-  那么 解释了 1MB 大小限制的 DoS 防护意义
-  并且 说明了 `estimate_json_size` 的非分配实现技巧
-  并且 区分了 `resolve_path` 的路径规范化与 `O_NOFOLLOW` 的 symlink-safe I/O
-
-场景: 工程决策侧栏
-  测试: review_ch06_strategy_sidebar
-  当 阅读工程决策侧栏
-  那么 对比了全量注册、纯手动按需加载、预延迟 + LRU + 自动激活三种策略
-  并且 用上下文窗口成本和交互轮次解释当前混合治理策略的选择理由
-  并且 不把当前实现简化成"纯 LRU"
-
-场景: 纠正过时说法
-  测试: review_ch06_drift_corrections
-  当 阅读整章时
-  那么 不再把工具系统写成固定的单一工具总数
-  并且 不再声称 `with_builtins_and_sandbox()` 注册 15 个基础工具
-  并且 不再使用 `tools.byProvider` 这种过时配置字段
-  并且 不再把 `spawn_only` 解释成 deferred / LRU 延迟池的一部分
+场景: 旧数字零残留
+  测试: review_ch06_no_stale_numbers
+  当 在正文检索「14 个内置工具」「14 个工具」
+  那么 一处都不出现
