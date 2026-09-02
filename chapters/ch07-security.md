@@ -95,19 +95,19 @@ flowchart TB
 
 ### 7.1.4 五个后端各自的实现要点
 
-bwrap（Linux）：`wrap_command` 的顺序是：清掉 `BLOCKED_ENV_VARS` → `--ro-bind` 只读挂 `/usr`、`/lib`、`/lib64`、`/bin`、`/sbin`、`/etc` → `--tmpfs /tmp` 和 `--tmpfs /var/tmp`（先于 workspace bind，防止 workspace 在 /tmp 下时被 tmpfs 语义反噬）→ workspace `--bind` 或 `--ro-bind`（取决于 `workspace_write`）→ 可选的 `.git` 定向 rw bind（`repo_git_write`）→ `--dev`、`--proc` → `!allow_network` 时 `--unshare-net` → `--unshare-pid`、`--die-with-parent`。`repo_git_write` 的注释写得很清楚：这是窄授权，只 bind `<repo>/.git`，绝不 bind 整个 `/`，因为后者会把 `SSH_AUTH_SOCK`、`docker.sock` 这类宿主 AF_UNIX socket 暴露给沙箱内进程（`bwrap.rs:30-40` 的字段文档）。
+bwrap（Linux）：`wrap_command` 的顺序是：清掉 `BLOCKED_ENV_VARS` → `--ro-bind` 只读挂 `/usr`、`/lib`、`/lib64`、`/bin`、`/sbin`、`/etc` → `--tmpfs /tmp` 和 `--tmpfs /var/tmp`（先于 workspace bind，防止 workspace 在 /tmp 下时被 tmpfs 语义反噬）→ workspace `--bind` 或 `--ro-bind`（取决于 `workspace_write`）→ 可选的 `.git` 定向 rw bind（`repo_git_write`）→ `--dev`、`--proc` → `!allow_network` 时 `--unshare-net` → `--unshare-pid`、`--die-with-parent`。`repo_git_write` 的注释写得很清楚：这是窄授权，只 bind `<repo>/.git`，绝不 bind 整个 `/`，因为后者会把 `SSH_AUTH_SOCK`、`docker.sock` 这类宿主 AF_UNIX socket 暴露给沙箱内进程（`bwrap.rs:17-26` 的字段文档）。
 
 Landlock（Linux）：`landlock.rs:27` 的 `LinuxContainerSandbox` 不自己施加任何限制，全部委托给 `octos-sandbox` 助手进程，让 Landlock 与 seccomp 的设置发生在 exec shell 之前。找不到助手时不是降级而是拒绝：构造一条 `echo 'sandbox error: octos-sandbox helper not found' >&2; exit 1` 命令（`landlock.rs:31-39`）。
 
 macOS sandbox-exec：最厚的后端（1,767 行），生成 SBPL（sandbox profile 语言）profile。注入防御在 `macos.rs:205-212`：cwd 含控制字符或 SBPL 元字符（`(`、`)`、`\`、`"`）时直接拒绝执行，因为路径已验证不含引号，后续拼接无需转义。macOS 也是唯一能精确表达 #1976 写围栏的后端：每个 glob 变成一条 `(allow file-write* (regex ...))` 规则（`build_backend` 的注释，`mod.rs:1081-1085`）。
 
-Docker：跨平台兜底。按 `MountMode` 挂 workspace（`ReadWrite` → `-v cwd:/workspace`，`ReadOnly` → 加 `:ro`，`None` → 不挂），支持 CPU/内存限制。`is_blocked_bind_source`（`docker.rs:24-33`）拒绝把 `docker.sock`、`/etc`、`/proc`、`/sys`、`/dev` 作为 bind source，cwd 命中危险源时整个命令拒绝执行。
+Docker：跨平台兜底。按 `MountMode` 挂 workspace（`ReadWrite` → `-v cwd:/workspace`，`ReadOnly` → 加 `:ro`，`None` → 不挂），支持 CPU/内存限制。`is_blocked_bind_source`（`docker.rs:20-30`）拒绝把 `docker.sock`、`/etc`、`/proc`、`/sys`、`/dev` 作为 bind source，cwd 命中危险源时整个命令拒绝执行。
 
 AppContainer（Windows）：`windows.rs:46` 委托 `octos-sandbox.exe` 创建/复用 AppContainer profile。每个 octos profile 有自己的 AppContainer SID，提供默认拒绝的文件系统访问与可配置的网络隔离。
 
 ### 7.1.5 环境变量清理
 
-所有后端共享 `BLOCKED_ENV_VARS`（从 `octos-core` 转发，`mod.rs:33`），一个 20 项的清单，按注入面分组：Linux 动态库注入（`LD_PRELOAD` 等 3 项）、macOS dylib 注入（`DYLD_*` 5 项）、运行时代码注入（`NODE_OPTIONS`、`PYTHONSTARTUP` 等 7 项）、shell 启动注入（`BASH_ENV`、`ENV`、`ZDOTDIR`）。bwrap 与 Landlock 后端在进入沙箱前逐项 `env_remove`。
+所有后端共享 `BLOCKED_ENV_VARS`（从 `octos-core` 转发，`mod.rs:33`），一个 18 项的清单，按注入面分组：Linux 动态库注入（`LD_PRELOAD` 等 3 项）、macOS dylib 注入（`DYLD_*` 5 项）、运行时代码注入（`NODE_OPTIONS`、`PYTHONSTARTUP` 等 7 项）、shell 启动注入（`BASH_ENV`、`ENV`、`ZDOTDIR` 3 项）。清单的执行点因后端而异：bwrap、Landlock、macOS（`macos.rs:478`）与 Windows（`windows.rs:90`、`:139`）都会逐项 `env_remove`；Docker 后端反而一处不清理，容器隔离本身承担了环境隔离。
 
 ### 7.1.6 cargo 授权：从尽力写到 lock-only
 
