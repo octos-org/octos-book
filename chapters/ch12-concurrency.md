@@ -111,7 +111,7 @@ permit 的消费点不在 gateway，而在 actor 侧的消息处理入口：`cra
 - All-Exclusive 批：按 LLM 调用顺序串行执行；首个错误（含 hook 拒绝与 panic）之后剩余调用跳过，各自收到合成的「因兄弟任务出错而取消」结果，保证每个 `tool_call_id` 都有应答。
 - 混合批（#1766）：第一阶段并行跑所有 Safe 调用，第二阶段按原顺序串行跑 Exclusive 调用，最终按原始调用顺序重组结果。
 
-并行路径还带统一超时：`join_parallel_handles`（`crates/octos-cli` 无关，位于 `crates/octos-agent/src/agent/execution.rs:2957` 起）对每个 handle 施加同一 deadline，超时先 `abort()`，再给一段有界的清理宽限等待，然后返回合成超时结果。LLM 看到的永远是一一对应的工具结果列表，并行细节不外泄。
+并行路径还带统一超时：`join_parallel_handles`（`crates/octos-cli` 无关，位于 `crates/octos-agent/src/agent/execution.rs:2959` 起）对每个 handle 施加同一 deadline，超时先 `abort()`，再给一段有界的清理宽限等待，然后返回合成超时结果。LLM 看到的永远是一一对应的工具结果列表，并行细节不外泄。
 
 两道闸（信号量与批次准入）解决的是不同粒度的过载，判据也不同。信号量闸的判据是资源：LLM 调用贵且慢，10 个并发会话大致对应上游配额与内存的安全水位，超了就该排队，排队无害。批次准入的判据是语义：并行本身没有成本问题，问题是 Exclusive 工具之间有顺序依赖（同一文件的写与写、写与读），乱序执行的结果不是慢而是错。所以信号量用「等待」处理超限，批次准入用「降级为串行」处理冲突，一个是背压，一个是正确性防御。把两者混在一处会出现经典误判：有人看到工具串行执行以为是并发不够，实际是批次里有 Exclusive 成员在保护语义。判别方法是看批次的构成：全 Safe 批永远并行，出现串行必有 Exclusive 参与（#1766 之前混合批整体串行，之后只串行必要部分，这是那次优化的全部内容）。
 
@@ -142,7 +142,7 @@ pub enum TaskStatus {
 | Completed | Ready（经 Verifying） | 校验通过，产出可信 |
 | Failed | Failed | 执行失败 |
 | Cancelled | Cancelled | 用户主动取消 |
-| Parked | （无投射） | 等待重连收养，非终态非活跃 |
+| Parked | Cancelled（#27c 复用空闲投射槽，task_supervisor.rs:373） | 等待重连收养，非终态非活跃 |
 
 这个投射有两个消费面。MCP 侧：`octos mcp-serve` 只暴露一个工具 `run_octos_session`（`crates/octos-agent/src/mcp_server.rs:66`），会话派发通过 `SessionLifecycleObserver::mark_state`（`crates/octos-agent/src/mcp_server.rs:145`）上报 Queued → Running → Verifying → Ready/Failed 的迁移（trait 文档在 `:142-144`）；外层 MCP caller 最终收到的是会话级聚合结果（`final_state: TaskLifecycleState`，`:108`），不是内部工具事件流。Harness 侧：`McpServerCall` 事件携带 `outcome` 字段，取值 `ready/failed/queued/running/verifying`，与 `TaskLifecycleState` 一一对应（`crates/octos-agent/src/harness_events.rs:651-652`，事件变体定义见 `:397` 附近），后台任务的生命周期由此进入 harness events 与 metrics，成为 operator 可观测面的一部分。
 
@@ -266,7 +266,7 @@ fleet 侧的租约语义值得在本章展开，因为它是「并发所有权�
 
 ## 思考题
 
-1. 若把 `max_concurrent_sessions` 从 10 调到 100，第 11.3 节的 permit 消费位置（消息处理层）会导致什么现象？如果 permit 改在会话创建层获取呢？
+1. 若把 `max_concurrent_sessions` 从 10 调到 100，第 12.3 节的 permit 消费位置（消息处理层）会导致什么现象？如果 permit 改在会话创建层获取呢？
 2. `TaskStatus::Parked` 不属于 `is_active` 也不属于 `is_terminal`。设计一个并发场景，说明若把 Parked 误归为终态会破坏什么。
 3. 混合批策略（#1766）先并行 Safe 再串行 Exclusive，为什么不能反过来？结果按「原始 LLM 调用顺序重组」这一约束，消费方依赖它做什么？
 4. `MasterContinuationScheduler` 的 TOCTOU 防护只记录 External 键。若一个新的 Internal 生产者也会在窗口内重复入队同键，会发生什么？注释里的 INVARIANT 要求新生产者怎么做？
