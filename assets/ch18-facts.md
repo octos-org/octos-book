@@ -27,7 +27,7 @@ for f in crates/octos-cli/src/goal_tool.rs crates/octos-cli/src/commands/goal.rs
          crates/octos-cli/src/autonomy/{goal_loop_runtime,supervisor_store,master_continuation_scheduler,fleet_wake}.rs \
          crates/octos-fleet/src/sqlite_ledger.rs; do wc -l $f; head -1 $f; done
 ```
-Goal 线合计:9 文件 ≈ 47,645 行(goal_tool 3028 + goal 1116 + ledger 240 + goal_loop_runtime 1562 + mcs 1416 + supervisor_store 3277 + fleet_wake 1807 + sqlite_ledger 6360)。
+Goal 线合计:9 文件实核 52,445 行(goal_tool 3028 + goal 1116 + ledger 240 + goal_loop_runtime 1562 + mcs 1416 + supervisor_store 3277 + fleet_wake 1807 + sqlite_ledger 6360 = 18,806,再加 agent_orchestrator 33,639;原 47,645 为旧基线笔误,正文已统一 52,445——2026-09-03 外环 06:05 裁定加注,f39f333/2a07870 双轮实核)。
 
 ## 2. Peer 线文件清单
 
@@ -156,7 +156,7 @@ Peer 线合计:9 文件 ≈ 5,965 行(peers/mod 3186 + host 502 + commands/peer 
 
 ## 12. 关键数字汇总
 
-- goal 线:9 文件 ≈ 47,645 行;peer 线:9 文件 ≈ 5,965 行
+- goal 线:9 文件实核 52,445 行(旧值 47,645 系笔误,见上注);peer 线:9 文件实核 5,969 行
 - goal 工具族:10 个工具(7 goal_* + 3 monitor_*),`fn name()` 均已列
 - GoalLedger 公开方法:39 个 pub fn(impl :206-:2241)
 - mcs:1416 行,Reason 六变体、priority 四档(rank 0/10/20/30)

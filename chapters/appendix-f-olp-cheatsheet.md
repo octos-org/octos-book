@@ -43,7 +43,7 @@ ACK(done|wontdo|blocked): <说明>
 
 | 要素 | 规范 | 来源行号 |
 |---|---|---|
-| 板位置 | 每仓库一块 `<repo>/.octos/OUTER_LOOP_REVIEW.md`;`docs/` 下同名文件是冻结快照,严禁写入 | OLP_OUTER_BOOT.md:36-37 |
+| 板位置 | 每仓库一块 `<repo>/.octos/OUTER_LOOP_REVIEW.md`;`docs/` 下同名文件是冻结快照,严禁写入 | octoscode/docs/OLP_OUTER_BOOT.md:36-37 |
 | 写入方式 | 必须走原子追加助手 `scripts/olp-board-append.sh <板路径>`(正文从 stdin 喂),flock 互斥加自写登记 | 同上 :38-41 |
 | 编号 | 先 `grep -oE '^### [0-9]+' <板> \| tail -1` 取当前最大号,加一使用 | 同上 :42 |
 | 条目内容 | 自包含:背景、精确文件/行号、修法方向、验收标准、分支名(基于 main) | 同上 :43-44 |
@@ -71,12 +71,12 @@ ACK(done|wontdo|blocked): <说明>
 
 | 步骤 | 内容 | 来源行号 |
 |---|---|---|
-| 署名 | 选定署名 `外环(<名字>)`,所有黑板写入必须署名;多外环并存时每条目单一主审,他人条目只可署名批注,分歧升级 operator | OLP_OUTER_BOOT.md:10-14 |
+| 署名 | 选定署名 `外环(<名字>)`,所有黑板写入必须署名;多外环并存时每条目单一主审,他人条目只可署名批注,分歧升级 operator | octoscode/docs/OLP_OUTER_BOOT.md:10-14 |
 | 取主审锁 | 以 `octoscode outer-duty hold --project <项目> --signature <署名> --duties <职责> -- <agent 启动命令>` 包裹启动;`check` 仅观察,stdout 恰一态 VACANT/Held/ERROR | 同上 :74-81 |
-| 定数据根与监听 | 数据根 `~/.octos/instances/<cwd-hash>/profiles/<profile>/data`;tail serve 日志过滤 `peer-goal:\|escalation\|transitioned goal\|ERROR`;观测分投递、消费、执行三层,只看一层必误判 | OUTER_LOOP_PROTOCOL.md:126-134 |
+| 定数据根与监听 | 数据根 `~/.octos/instances/<cwd-hash>/profiles/<profile>/data`;tail serve 日志过滤 `peer-goal:\|escalation\|transitioned goal\|ERROR`;观测分投递、消费、执行三层,只看一层必误判 | octoscode/docs/OUTER_LOOP_PROTOCOL.md:126-134 |
 | 读协议与黑板 | 读协议全文与黑板 `Active` 区了解当前指导,历史区仅用于审计 | 同上 :135-136 |
 
-内环重启后的外环巡检硬清单,四步逐项核对,禁止「记一笔稍后补」(来源:OLP_OUTER_BOOT.md:16-19):
+内环重启后的外环巡检硬清单,四步逐项核对,禁止「记一笔稍后补」(来源:octoscode/docs/OLP_OUTER_BOOT.md:16-19):
 
 | 步骤 | 内容 | 来源行号 |
 |---|---|---|

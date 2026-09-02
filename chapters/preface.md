@@ -89,7 +89,7 @@ graph LR
         A3["C 配置参考"]
         A4["D Feature Flags"]
         A5["E 构建与贡献"]
-        A6["F 端到端追踪"]
+        A6["F OLP 速查与 E2E 追踪"]
     end
     C3 --> C5
     C4 --> C5
