@@ -96,7 +96,7 @@ unsafe_code = "deny"
 先看三段语言语义的对照（示意代码，非 octos 源码）：
 
 ```go
-// Go:两个 goroutine 并发自增。编译通过,数据竞争潜伏
+// Go:两个 goroutine 并发自增。编译通过，数据竞争潜伏
 go func() { counter++ }()
 go func() { counter++ }()
 ```
@@ -107,7 +107,7 @@ threads = [threading.Thread(target=process_chunk) for c in chunks]
 ```
 
 ```rust
-// Rust:同样的写法无法通过编译,借用在跨线程时必须显式
+// Rust:同样的写法无法通过编译，借用在跨线程时必须显式
 s.spawn(|| counter += 1);  // ❌ error: closure may outlive borrowed value
 ```
 
