@@ -52,6 +52,8 @@ Agent 与普通软件的区别在于它执行动作：运行 shell 命令、读�
 
 `Auto` 是唯一「找不到后端可以降级」的模式，其余显式模式都走 fail-closed 拒绝。这个不对称是 7.1.3 的主题。
 
+Auto 的探测序与回退逻辑全在 `decide_sandbox` 的 `SandboxMode::Auto` 分支（`mod.rs:875-901`）：先按 OS 找原生后端（macOS 查 `sandbox_exec`，Linux 先查 `bwrap` 再查 Landlock 助手，Windows 查 AppContainer 助手），原生全无才用 `docker().then_some(SandboxBackendChoice::Docker)` 兜底，再无则按 `fail_closed` 分流为拒绝或降级。这个顺序有两层考量。原生优先是因为隔离粒度：bwrap/sandbox-exec/AppContainer 直接复用内核机制，无守护进程依赖，失败模式是探测期一次性的；Docker 兜底任何 OS 都可用但依赖守护进程与镜像。探测本身分诚实度两档：`HostBackendProbe`（`mod.rs:574`）的 `bwrap()` 文档写明「actually runs bwrap, not a PATH scan」，`RealHostProbe` 里它调 `bwrap_works()`（`mod.rs:1140`）真实跑一次带最小挂载的 bwrap 加 `/bin/true`，验证内核允许当前用户建 namespace；而 `docker()` 只是 `which_exists("docker")` 的 PATH 扫描。Linux 上这个差别尤其重要：unprivileged user namespace 常被发行版关闭，PATH 里有 bwrap 不等于 bwrap 能跑，PATH 式探测会造出一个每次 spawn 都失败的假后端，而「配置了却每次失败」正是 `eb7c7221` 要消灭的那类静默失败。Linux 原生内部 bwrap 优先于 Landlock，两者粒度相近，但 bwrap 不依赖助手二进制，Landlock 探测要等助手应答 `--probe-linux` 才为真。
+
 ### 7.1.3 decide_sandbox：纯函数决策与 fail-closed
 
 `eb7c7221` 之前，`create_sandbox` 把 `cfg!` 平台探测与后端构造交织在一起，结果是两个问题：跨平台矩阵没法在开发机上测试（你在 macOS 上测不了 Linux 路径），以及显式模式悄悄降级。重构把决策抽成纯函数 `pub fn decide_sandbox(config, os, probe)`（`mod.rs:809`）：
@@ -73,6 +75,10 @@ pub fn decide_sandbox(
 `UnconfinedReason`（`mod.rs:664`）区分三种直通原因：`Disabled`（`--danger-full-access` 设置的显式 opt-out）、`ExplicitNone`（`mode="none"`）、`AutoNoBackend`（Auto 全无后端，唯一合法的降级）。`SandboxUnavailable`（`mod.rs:694`）是类型化的拒绝理由，携带 `requested`、`reason` 和 per-OS 的 `remediation` 块（`remediation_for` 在 `mod.rs:754`，按 OS 给安装建议）。
 
 拒绝如何到达用户分两个受众，这是 #2196 review 的 MUST-FIX：`Display` 实现面向模型，写明「Shell/exec commands will keep refusing until then」；操作者修复建议只进日志和 `octos doctor`，不进模型上下文。`stderr_line()`（`mod.rs:724`）把拒绝文本过滤到只剩 `[A-Za-z0-9 ./:_=,-]`，确保嵌入 `sh -c 'echo ... >&2; exit 1'` 时不可能被引号逃逸重新变成命令执行。
+
+fail-closed 的执行还有一条更早的短路路径。exec 形态的工具在 spawn 之前先查 `refusal()`：`shell.rs:1069` 与 `coding_tools.rs:501`、`:625`、`:2068` 都是 `if let Some(refusal) = self.sandbox.refusal()` 开头，命中就直接把模型侧拒绝文本作为工具结果返回，连子进程都不起。也就是说 `RefusingSandbox` 的 `wrap_command`（mod.rs:914 起的 impl）只是兜底：真正到达它的命令（例如经第三方调用点直接拿 `Box<dyn Sandbox>` 包装的）才会走 echo 加 exit 1 的替身命令。两层设计的分工是，工具层短路保证模型看到可读的拒绝而非一条 exit 1 的裸输出，trait 层兜底保证任何调用点都不可能把命令无沙箱跑出去。
+
+这个改动的工程动机值得展开。`eb7c7221` 之前的行为由 `mod.rs:524-528` 的重构注释记录在案：`create_sandbox` 把 `cfg!` 门控的探测与后端构造交织在一起，导致「两个显式模式静默降级为无隔离」。具体场景是操作者在 CI 或 fleet 配置里写死 `sandbox.mode = "bwrap"`，宿主机没装 bwrap，命令照跑无沙箱，唯一的线索是启动日志里一行容易淹没的 warn。故障模式有三个叠加属性使它必须修：配置表达了隔离意图而被覆盖（fail-open）；覆盖不可见（用户以为有沙箱）；行为矩阵不可测（`cfg!` 编译期分派意味着 macOS 开发机上根本没有 Linux 的代码路径，回归只能靠真实 Linux CI 撞出来）。`decide_sandbox` 把三类事实全部参数化（配置、`HostOs`、probe），一次重构同时解决三个：显式模式不可兑现返回 `Refuse`，拒绝对操作者可见且带修复建议，全平台矩阵可以在任何开发机的单元测试里穷举。
 
 `create_sandbox`（`mod.rs:1005`）是决策到后端的投影：`Confine` 构造后端，`Unconfined` 返回 `NoSandbox` 并按原因记日志（`AutoNoBackend` 走 `warn_auto_unconfined_once`，`mod.rs:1039`，`std::sync::Once` 保证每进程只告警一次），`Refuse` 返回 `RefusingSandbox`。签名保持不可失败，大量构造点不用改；但结果上的每条命令都会带着类型化的 `SandboxUnavailable` 拒绝。
 
@@ -173,6 +179,8 @@ pub struct WorkerGrant {
 ```
 
 每个字段的 `#[serde(default)]` 有一层设计：grant 出现之前持久化的旧任务（或什么都没指定的 master）加载为 `WorkerGrant::minimal()`，最小权限是默认值，旧记录无需 schema 升级就可读。`skip_serializing_if` 让无围栏的 grant 序列化出与 pre-#1976 逐字节相同的形状，旧读者读新记录看不到新键。
+
+五个字段不是随手凑的，每一条对应一类必须显式回答的授权问题，缺一个就留一个默认放行的洞。没有 `network`，web 工具与 shell 的出网能力无法区分，「不给网络」无处表达，`WEB_TOOLS` 只能授予或整体禁用；没有 `tools`，注册表形状就只能全有或全无，`sorted_tools()` 这个审计键（「操作者授予了什么，一个不多」）没有存在基础；没有 `fs`，workspace 与 host 的文件系统边界退回隐式的 cwd 约定，`FsGrant::Host` 这种操作者的显式信任决定无处落笔；没有 `write_paths`，#1976 之前「worker 只能写这几个文件」只能靠 `workspace_write` 二值粗调，要么全 workspace 可写要么全只读；没有 `create_only`，「创建可以、覆盖不行」这个防篡改语义（重放安全的关注点）在类型上不可表达。反过来，字段也只有这五个：v1 刻意不做按主机的原始网络过滤（需要内核级 egress proxy）、不做文件系统的任意 ACL（工具层没有对应机制，grant 诚实反映它能执行的范围）。字段集合等于「两层执行机制都能兑现的授权问题」的精确并集，多一个是撒谎，少一个是漏洞。
 
 ### 7.4.2 #1976 写围栏：三层语义
 
