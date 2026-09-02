@@ -200,6 +200,8 @@ master 侧的工具族共六个,覆盖 peer 的完整操作面:`peer_handoff`(st
 
 ---
 
+数据库文件 `goal_ledger.sqlite` 由 keeper 进程独占持有,worker 与 transition 只经 WAL 侧读写,这一持有关系是恢复语义的地基。
+
 ## 延伸阅读
 
 - `octoscode/docs/PEER_GOAL_ARCHITECTURE.md` — 设计渊源、绑定与回流、budget 软限制的原始架构文档,本章多张图取材于此并按源码校验
