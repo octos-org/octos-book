@@ -64,15 +64,15 @@ pub trait LlmProvider: Send + Sync {
 
 几个值得关注的设计选择：
 
-**`Send + Sync` 约束。** trait 要求实现者是线程安全的，因为 Provider 实例会被多个异步任务通过 `Arc` 共享。这个约束在编译期保证了不会出现单线程 Provider 实现被意外用在多线程场景的错误。
+`Send + Sync` 约束。 trait 要求实现者是线程安全的，因为 Provider 实例会被多个异步任务通过 `Arc` 共享。这个约束在编译期保证了不会出现单线程 Provider 实现被意外用在多线程场景的错误。
 
-**`chat_stream()` 的默认实现。** 不是所有 Provider 都原生支持流式响应。默认实现（`provider.rs:27-56`）调用非流式的 `chat()` 方法，然后将完整响应包装为一个合成流：按内容、工具调用、usage、done 事件依次输出。这让新 Provider 只需实现 `chat()` 就能基本工作，流式支持可以后续优化。
+`chat_stream()` 的默认实现。 不是所有 Provider 都原生支持流式响应。默认实现（`provider.rs:27-56`）调用非流式的 `chat()` 方法，然后将完整响应包装为一个合成流：按内容、工具调用、usage、done 事件依次输出。这让新 Provider 只需实现 `chat()` 就能基本工作，流式支持可以后续优化。
 
-**Provider metadata。** `provider_metadata()` 与 `provider_metadata_for_index()` 是当前主分支新增的重要接口（`provider.rs:97-109`）。它们把实际命中的 provider slot、模型 ID、provider name 等信息交给上层，用于观测、成本归因和多 provider chain 的精确指标记录。`provider_metadata_for_index()` 解决的是组合 Provider 的问题：当一个 `ProviderChain` 内部选中了第 N 个 slot，上层不能只看到 chain 本身的名字，而必须知道真正被调用的是哪一个后端。签名现在是 `_provider_index: Option<usize>`（103 行）：调用方知道具体 slot 时传 `Some(idx)`，只知道 provider 本体时传 `None`，简单调用方不必伪造下标。
+Provider metadata。 `provider_metadata()` 与 `provider_metadata_for_index()` 是当前主分支新增的重要接口（`provider.rs:97-109`）。它们把实际命中的 provider slot、模型 ID、provider name 等信息交给上层，用于观测、成本归因和多 provider chain 的精确指标记录。`provider_metadata_for_index()` 解决的是组合 Provider 的问题：当一个 `ProviderChain` 内部选中了第 N 个 slot，上层不能只看到 chain 本身的名字，而必须知道真正被调用的是哪一个后端。签名现在是 `_provider_index: Option<usize>`（103 行）：调用方知道具体 slot 时传 `Some(idx)`，只知道 provider 本体时传 `None`，简单调用方不必伪造下标。
 
-**指标上报方法。** `export_metrics()`、`report_late_failure()`、`report_stream_metrics()` 三个方法都有空的默认实现。它们为 AdaptiveRouter 的 EMA 评分系统提供数据源（见 3.4 节），但不强制所有 Provider 实现。这种"可选钩子"模式避免了 trait 膨胀。
+指标上报方法。 `export_metrics()`、`report_late_failure()`、`report_stream_metrics()` 三个方法都有空的默认实现。它们为 AdaptiveRouter 的 EMA 评分系统提供数据源（见 3.4 节），但不强制所有 Provider 实现。这种"可选钩子"模式避免了 trait 膨胀。
 
-**`ensure_ready()` 与 `estimate_request_tokens()`。** 这是基线上两个较新的成员。`ensure_ready()`（`provider.rs:65`）是异步初始化钩子：agent loop 与 prompt-context 桥在每 turn 第一次依赖窗口数的决策前 await 它，本地上下文探测（见 3.7 节）借此保证真实窗口在首次 compaction 决策前 resolve，而不是在第一次 chat 之后；包装器逐层委托。`estimate_request_tokens()`（`provider.rs:82-89`，#2143 part 3）估算该 provider 实际构建的请求 token 数，含 provider 特有序列化开销（独立 system 块、逐消息 content-block 框架、cache-control 元数据），路由适配守卫据此不再需要用 12.5% 的安全余量顶替这部分开销；默认是 provider 无关的基线估算，具体 provider 覆写收紧，包装器同样委托内层。
+`ensure_ready()` 与 `estimate_request_tokens()`。 这是基线上两个较新的成员。`ensure_ready()`（`provider.rs:65`）是异步初始化钩子：agent loop 与 prompt-context 桥在每 turn 第一次依赖窗口数的决策前 await 它，本地上下文探测（见 3.7 节）借此保证真实窗口在首次 compaction 决策前 resolve，而不是在第一次 chat 之后；包装器逐层委托。`estimate_request_tokens()`（`provider.rs:82-89`，#2143 part 3）估算该 provider 实际构建的请求 token 数，含 provider 特有序列化开销（独立 system 块、逐消息 content-block 框架、cache-control 元数据），路由适配守卫据此不再需要用 12.5% 的安全余量顶替这部分开销；默认是 provider 无关的基线估算，具体 provider 覆写收紧，包装器同样委托内层。
 
 ### 3.1.2 核心数据类型
 
@@ -135,13 +135,13 @@ struct ProviderEntry {
 | Minimax | `"minimax"` | MiniMax-Text-01 |
 | Zhipu | `"glm"` | glm-4-plus |
 
-**特殊处理：O 系列模型。** OpenAI 的 o1、o3、o4 系列需要前缀匹配而非子串匹配（`registry/mod.rs:248-250`），因为 "o1" 作为子串可能匹配到其他 Provider 的模型名中（如 `ro1and` 假设模型名）。
+特殊处理：O 系列模型。 OpenAI 的 o1、o3、o4 系列需要前缀匹配而非子串匹配（`registry/mod.rs:248-250`），因为 "o1" 作为子串可能匹配到其他 Provider 的模型名中（如 `ro1and` 假设模型名）。
 
 另一个容易误读的点是：有些 Provider 的 `detect_patterns` 为空，这不是遗漏，而是明确要求用户通过显式 provider 名或 alias 命中。典型例子包括 Vertex、R9s、OpenRouter、Z.AI、两个 coding-plan family、NVIDIA、Ollama、vLLM 和 local。它们的模型名往往是跨平台转发名、OpenAI 兼容名或用户本地自定义名，盲目做子串检测会产生错误路由。coding-plan family（moonshot-coding、zai-coding）注册在基础 family 之前，显式点名时 coding 端点先于普通端点解析，避免 coding-plan 密钥被静默送到会拒绝它的普通端点。
 
 ### 3.2.2 完整 Provider 注册表
 
-octos 当前注册 **19 个 provider family**（口径：`registry/mod.rs` 中 `static ALL` 的条目数，186-210 行；registry/ 目录 20 个文件 = 19 个 family 模块 + mod.rs 本身），按数组顺序即检测优先级：
+octos 当前注册 19 个 provider family（口径：`registry/mod.rs` 中 `static ALL` 的条目数，186-210 行；registry/ 目录 20 个文件 = 19 个 family 模块 + mod.rs 本身），按数组顺序即检测优先级：
 
 | 序 | family | 协议 | 别名（示例） | 检测模式 | 默认模型（取自目录） |
 |---|---------|------|------|---------|---------|
@@ -205,13 +205,13 @@ flowchart TD
     style RP2a fill:#bfb,stroke:#333
 ```
 
-**图 3-1：三层容错链架构。** 请求从 AdaptiveRouter 进入，经 ProviderChain 路由到具体 Provider，每个 Provider 包裹在 RetryProvider 中处理瞬时故障。
+图 3-1：三层容错链架构。 请求从 AdaptiveRouter 进入，经 ProviderChain 路由到具体 Provider，每个 Provider 包裹在 RetryProvider 中处理瞬时故障。
 
 ### 3.3.1 第一层：RetryProvider — 指数退避
 
 RetryProvider（`../octos/crates/octos-llm/src/retry.rs:41-312`）处理单个 Provider 的瞬时故障。
 
-**退避算法**（`retry.rs:259-265`）：
+退避算法（`retry.rs:259-265`）：
 
 ```rust
 fn calculate_delay(&self, attempt: u32) -> Duration {
@@ -224,7 +224,7 @@ fn calculate_delay(&self, attempt: u32) -> Duration {
 
 默认配置（`retry.rs:28-37`）：最多重试 3 次，初始延迟 1 秒，退避乘数 2.0，最大延迟 60 秒。实际退避序列为 1s → 2s → 4s → 8s（但被 60s 上限钳位）。
 
-**哪些错误可重试？**（`retry.rs:107-147`）
+哪些错误可重试？（`retry.rs:107-147`）
 
 | HTTP 状态码 | 含义 | 是否重试 | 是否触发 failover |
 |------------|------|---------|-----------------|
@@ -239,13 +239,13 @@ fn calculate_delay(&self, attempt: u32) -> Duration {
 
 注意 reqwest 级别的网络超时（连接超时、读超时）的特殊处理：不在本地重试（因为同一个 Provider 大概率还是超时），而是立即向上层触发 failover，让 ProviderChain 切换到另一个 Provider。HTTP 504（Gateway Timeout）则被视为可重试，因为服务器可能在短暂过载后恢复。
 
-**速率限制解析**（`retry.rs:267-311`）：当收到 429 响应时，RetryProvider 会尝试从错误消息中解析推荐的等待时间（如 "Please try again in 29.159s"），加上 1 秒缓冲后等待。如果无法解析，回退到 30 秒固定等待。
+速率限制解析（`retry.rs:267-311`）：当收到 429 响应时，RetryProvider 会尝试从错误消息中解析推荐的等待时间（如 "Please try again in 29.159s"），加上 1 秒缓冲后等待。如果无法解析，回退到 30 秒固定等待。
 
 ### 3.3.2 第二层：ProviderChain — 有序故障转移
 
 ProviderChain（`../octos/crates/octos-llm/src/failover.rs:36-249`）管理一组 Provider 的故障转移顺序。
 
-**Circuit Breaker 设计**（`failover.rs:27-30`）：
+Circuit Breaker 设计（`failover.rs:27-30`）：
 
 ```rust
 struct ProviderSlot {
@@ -256,23 +256,23 @@ struct ProviderSlot {
 
 每个 Provider 维护一个原子计数器记录连续失败次数。当失败次数达到阈值（默认 3），该 Provider 被标记为"降级"（degraded）。成功调用后计数器重置为 0（`record_success` @ `failover.rs:111-114`，`swap(0)` 在 114 行）。
 
-**故障转移逻辑**（`failover.rs:85-99`）：
+故障转移逻辑（`failover.rs:85-99`）：
 
 1. 首先尝试第一个未降级的 Provider
 2. 如果所有 Provider 都降级了，选择失败次数最少的那个
 3. 跳过已降级的 Provider，除非它是最后的选择
 
-**延迟故障上报**（`failover.rs:378`）：`report_late_failure()` 处理一种微妙的场景：Provider 返回了 200 响应，但流式解析后发现内容为空或格式错误。这时需要回溯性地惩罚该 Provider，增加其失败计数，让后续请求优先选择其他 Provider。
+延迟故障上报（`failover.rs:378`）：`report_late_failure()` 处理一种微妙的场景：Provider 返回了 200 响应，但流式解析后发现内容为空或格式错误。这时需要回溯性地惩罚该 Provider，增加其失败计数，让后续请求优先选择其他 Provider。
 
 ### 3.3.3 第三层：AdaptiveRouter — EMA 评分与对冲竞赛
 
 AdaptiveRouter（`adaptive.rs:803` 起的 struct，inherent impl 延伸至文件尾 2795 行）是容错链的最高层，实现了智能路由。
 
-**三种模式**（`adaptive.rs:619-631`）：
+三种模式（`adaptive.rs:619-631`）：
 
-- **Off (0)**：静态优先级排序 + circuit breaker，最简单可靠
-- **Hedge (1)**：基于评分选择 + 对冲竞赛（hedge racing）
-- **Lane (2)**：基于评分的车道切换，比 hedge 更节省成本
+- Off (0)：静态优先级排序 + circuit breaker，最简单可靠
+- Hedge (1)：基于评分选择 + 对冲竞赛（hedge racing）
+- Lane (2)：基于评分的车道切换，比 hedge 更节省成本
 
 #### EMA 评分系统
 
@@ -285,7 +285,7 @@ AdaptiveRouter 为每个 Provider 维护一个实时评分。默认配置下，�
 | 优先级 (priority) | 20% | 配置顺序 | 用户配置 |
 | 成本 (cost) | 20% | 价格 | 模型目录 |
 
-**混合权重设计**（`adaptive.rs:1582` 与 1772，score 内的 EMA 混合）：稳定性因子使用"目录基线 + 实时数据"的混合计算。混合权重按调用次数递增：`min(total_calls / 20.0, 0.5)`，这意味着目录基线始终至少占 50% 的影响力。这个设计防止了"冷启动"问题：新 Provider 只有少量调用时，不会因为一两次偶然失败就被判为不可靠。
+混合权重设计（`adaptive.rs:1582` 与 1772，score 内的 EMA 混合）：稳定性因子使用"目录基线 + 实时数据"的混合计算。混合权重按调用次数递增：`min(total_calls / 20.0, 0.5)`，这意味着目录基线始终至少占 50% 的影响力。这个设计防止了"冷启动"问题：新 Provider 只有少量调用时，不会因为一两次偶然失败就被判为不可靠。
 
 这里要特别注意：`score()` 明确用 `throughput` 而不是原始 latency 做运行时速度信号，因为单次请求延迟更容易受任务复杂度影响，不适合作为跨 Provider 的直接质量指标。
 
@@ -321,9 +321,9 @@ tokio::select! {
 
 当前主分支的容错链不只是在 Provider 之间切换，还会在同一 Provider 的多组凭据之间轮换，并根据内容复杂度选择模型 tier。
 
-**Credential pool。** `credential_pool.rs` 的模块注释明确把目标定义为"持久化 cooldown / rotation state"（`../octos/crates/octos-llm/src/credential_pool.rs:1-29`）。每个凭据都有 cooldown、rate-limit 计数、reset 时间、last used、usage count、reservation 等状态；轮换策略包括 `FillFirst`、`RoundRobin`、`Random`、`LeastUsed`（`credential_pool.rs:166-189`）。当 AdaptiveRouter 发现 401/403 或认证文本时，会把失败分类为 auth failure；发现 429 或 rate limit 文本时，会分类为 rate-limit failure，并通知 credential pool 进入 cooldown 或刷新流程（`notify_credential_failure()` @ `adaptive.rs:1081` 起，错误侧入口 `notify_credential_failure_from_error` @ 2352）。轮换结果还会发出稳定的 harness event，schema 为 `octos.harness.event.v1`，kind 为 `credential_rotation`（`credential_pool.rs:213-245`）。
+Credential pool。 `credential_pool.rs` 的模块注释明确把目标定义为"持久化 cooldown / rotation state"（`../octos/crates/octos-llm/src/credential_pool.rs:1-29`）。每个凭据都有 cooldown、rate-limit 计数、reset 时间、last used、usage count、reservation 等状态；轮换策略包括 `FillFirst`、`RoundRobin`、`Random`、`LeastUsed`（`credential_pool.rs:166-189`）。当 AdaptiveRouter 发现 401/403 或认证文本时，会把失败分类为 auth failure；发现 429 或 rate limit 文本时，会分类为 rate-limit failure，并通知 credential pool 进入 cooldown 或刷新流程（`notify_credential_failure()` @ `adaptive.rs:1081` 起，错误侧入口 `notify_credential_failure_from_error` @ 2352）。轮换结果还会发出稳定的 harness event，schema 为 `octos.harness.event.v1`，kind 为 `credential_rotation`（`credential_pool.rs:213-245`）。
 
-**Content classifier。** `content_classifier.rs` 是一个无 I/O 的启发式分类器，默认关闭；关闭时返回 `Strong`，避免因为未启用策略而误把复杂任务路由到便宜模型（`../octos/crates/octos-llm/src/content_classifier.rs:1-18`, `content_classifier.rs:61-80`）。启用后，它根据代码块、消息长度、强模型关键词和 URL 信号产生 `Cheap` 或 `Strong` tier：代码块、长度超过阈值、命中 debug/refactor/architecture/prove/proof/analyze/design 等关键词会升到 Strong；URL 只作为 reason 记录，不单独触发 Strong（`content_classifier.rs:158-209`）。AdaptiveRouter 可挂载 classifier，并在选择 lane 之前通过 callback 发出 `routing.decision` harness event（`RoutingDecisionCallback` 类型 @ `adaptive.rs:801`，安装入口 `set_routing_decision_callback` @ 1414）。这让上层 harness 可以解释"为什么这个 turn 走强模型"，而不是只能看到最终 provider。
+Content classifier。 `content_classifier.rs` 是一个无 I/O 的启发式分类器，默认关闭；关闭时返回 `Strong`，避免因为未启用策略而误把复杂任务路由到便宜模型（`../octos/crates/octos-llm/src/content_classifier.rs:1-18`, `content_classifier.rs:61-80`）。启用后，它根据代码块、消息长度、强模型关键词和 URL 信号产生 `Cheap` 或 `Strong` tier：代码块、长度超过阈值、命中 debug/refactor/architecture/prove/proof/analyze/design 等关键词会升到 Strong；URL 只作为 reason 记录，不单独触发 Strong（`content_classifier.rs:158-209`）。AdaptiveRouter 可挂载 classifier，并在选择 lane 之前通过 callback 发出 `routing.decision` harness event（`RoutingDecisionCallback` 类型 @ `adaptive.rs:801`，安装入口 `set_routing_decision_callback` @ 1414）。这让上层 harness 可以解释"为什么这个 turn 走强模型"，而不是只能看到最终 provider。
 
 ---
 
@@ -355,10 +355,10 @@ Chunk 2: \x8c成后请检查结果"}\n\n
 
 octos-llm 的 SSE 解析器（`../octos/crates/octos-llm/src/sse.rs:16-72`）采用字节级缓冲策略：
 
-1. **原始字节累积**：将每个 chunk 的原始字节追加到 `Vec<u8>` 缓冲区，不做 UTF-8 转换
-2. **事件边界检测**：在原始字节中搜索 `\n\n` 或 `\r\n\r\n` 分隔符
-3. **按事件转换**：找到完整事件后，才将该事件的字节块转换为 UTF-8 字符串
-4. **剩余字节保留**：未形成完整事件的尾部字节保留在缓冲区中
+1. 原始字节累积：将每个 chunk 的原始字节追加到 `Vec<u8>` 缓冲区，不做 UTF-8 转换
+2. 事件边界检测：在原始字节中搜索 `\n\n` 或 `\r\n\r\n` 分隔符
+3. 按事件转换：找到完整事件后，才将该事件的字节块转换为 UTF-8 字符串
+4. 剩余字节保留：未形成完整事件的尾部字节保留在缓冲区中
 
 这种设计保证了 UTF-8 转换只发生在完整事件上：SSE 协议保证事件边界不会落在 UTF-8 字符中间（因为 `\n` 是 ASCII 单字节字符）。
 
@@ -393,7 +393,7 @@ Chunk 2: 90]后"}\n\n                       ← "成"的第 3 字节 + "后"
 
 字节级缓冲策略避免了这个问题：两个 chunk 的原始字节被拼接后，在 `\n\n` 边界整体转换，"完成后" 被正确重组。
 
-这不是一个理论风险：当 LLM 流式输出中文回复时，每个 SSE 事件通常只包含 1-3 个 token。HTTP 的 chunked transfer encoding 可能在任何字节位置切割，与 token 边界无关。对于一个服务中文、日文、韩文用户的 Agent 平台，字节级缓冲是**必需的**而非优化。
+这不是一个理论风险：当 LLM 流式输出中文回复时，每个 SSE 事件通常只包含 1-3 个 token。HTTP 的 chunked transfer encoding 可能在任何字节位置切割，与 token 边界无关。对于一个服务中文、日文、韩文用户的 Agent 平台，字节级缓冲是必需的而非优化。
 
 ---
 
@@ -413,9 +413,9 @@ pub struct ModelInfo {
 }
 ```
 
-**别名系统**：除了完整的模型 ID（如 `claude-sonnet-4-20250514`），目录还支持别名查找（如 `sonnet` → `claude-sonnet-4-20250514`）。查找顺序（`catalog.rs:72-74`）：精确 ID 匹配 → 别名匹配 → None。
+别名系统：除了完整的模型 ID（如 `claude-sonnet-4-20250514`），目录还支持别名查找（如 `sonnet` → `claude-sonnet-4-20250514`）。查找顺序（`catalog.rs:72-74`）：精确 ID 匹配 → 别名匹配 → None。
 
-**成本追踪**：`ModelCost` 记录输入、输出、缓存读取三种 token 类型的百万 token 价格。AdaptiveRouter 的评分系统使用这些数据计算成本因子（见 3.3.3 节），在延迟和成本之间做权衡。
+成本追踪：`ModelCost` 记录输入、输出、缓存读取三种 token 类型的百万 token 价格。AdaptiveRouter 的评分系统使用这些数据计算成本因子（见 3.3.3 节），在延迟和成本之间做权衡。
 
 ---
 
@@ -423,9 +423,9 @@ pub struct ModelInfo {
 
 容错链解决"能不能调通"，成本层解决"这次调用花多少钱"。提交 f3aa07f0（#2194）把 prompt cache 的写入与计价纳入这条链路，出发点是一个不对称的事实：cache 写按 1.25 倍输入价计费，cache 读有折扣，而一次不再重放前缀的调用（compaction 摘要、子 agent 汇总）写了缓存也不会有人读，写入的溢价是纯损失。
 
-**一次性调用的 cache-write 退出。** `ChatConfig::cache_retention`（`config.rs:58-75`，`CacheRetention` 枚举 74-92 行）为单次请求声明缓存保留偏好：`None` 表示这次不写缓存。Anthropic 协议上的具体动作是不发任何 `cache_control` 断点，因为每个断点既读又写，一次没人读的写仍按 1.25 倍计费。`Default` 维持 provider 配置的缓存行为（Anthropic 的三个 ephemeral 断点）。默认值保持 `Default` 且 `skip_serializing_if` 不上 wire，持久化的 `ChatConfig` JSON 形状不变。装配点在 `anthropic.rs` 的 build_request（cache_control 装配 179-207 行；一次性请求不写 cache 的分支见 148 行附近）。
+一次性调用的 cache-write 退出。 `ChatConfig::cache_retention`（`config.rs:58-75`，`CacheRetention` 枚举 74-92 行）为单次请求声明缓存保留偏好：`None` 表示这次不写缓存。Anthropic 协议上的具体动作是不发任何 `cache_control` 断点，因为每个断点既读又写，一次没人读的写仍按 1.25 倍计费。`Default` 维持 provider 配置的缓存行为（Anthropic 的三个 ephemeral 断点）。默认值保持 `Default` 且 `skip_serializing_if` 不上 wire，持久化的 `ChatConfig` JSON 形状不变。装配点在 `anthropic.rs` 的 build_request（cache_control 装配 179-207 行；一次性请求不写 cache 的分支见 148 行附近）。
 
-**cache-write 感知定价。** 定价层（`pricing.rs:149-195`）按应答 slot 的协议区别建模：只有 Anthropic Messages 协议上报 `cache_creation_input_tokens`（写，1.25 倍）与 `cache_read_input_tokens`（读，折扣）；其他协议（openai、openrouter、deepseek、local、未知）的缓存读折扣不可知：目录中唯一的 OpenAI 行 `cache_read_per_mtok` 为 None，折扣随模型代次变化，套一个 provider 级折扣等于替部分模型编数。因此读按全输入价（1.0 倍，宁可高估不低估）计，写按 1.25 倍而非 0 计（`cache_write_tokens` 只有 Anthropic 解析器会填）。
+cache-write 感知定价。 定价层（`pricing.rs:149-195`）按应答 slot 的协议区别建模：只有 Anthropic Messages 协议上报 `cache_creation_input_tokens`（写，1.25 倍）与 `cache_read_input_tokens`（读，折扣）；其他协议（openai、openrouter、deepseek、local、未知）的缓存读折扣不可知：目录中唯一的 OpenAI 行 `cache_read_per_mtok` 为 None，折扣随模型代次变化，套一个 provider 级折扣等于替部分模型编数。因此读按全输入价（1.0 倍，宁可高估不低估）计，写按 1.25 倍而非 0 计（`cache_write_tokens` 只有 Anthropic 解析器会填）。
 
 ```mermaid
 flowchart TD
@@ -439,7 +439,7 @@ flowchart TD
     AP -->|否| F["读按全输入价 1.0x（不低估）<br/>写 1.25x，非 0"]
 ```
 
-**图 3-2：cache 经济学决策流。** 配置层决定写不写，计价层决定怎么算。
+图 3-2：cache 经济学决策流。 配置层决定写不写，计价层决定怎么算。
 
 ---
 
@@ -447,17 +447,17 @@ flowchart TD
 
 容错链之外，基线上还有一组围绕"谁来接这次调用"的模块。它们不是同一条链的层，而是按场景挂在 provider 之上的调度件。
 
-**lane.rs（per-topic 模型车道，RFC-3 / #1292）。** 按会话主题（如 `slides:*`、`code:*`、`research:*`）把请求路由到不同模型档位，让"做幻灯片"和"写核心代码"不必共享同一个 primary/fallback 组合。
+lane.rs（per-topic 模型车道，RFC-3 / #1292）。 按会话主题（如 `slides:*`、`code:*`、`research:*`）把请求路由到不同模型档位，让"做幻灯片"和"写核心代码"不必共享同一个 primary/fallback 组合。
 
-**router.rs（多模型子 agent 的 provider 路由）。** 按前缀方案把 LLM 调用分派给不同子 provider：子 agent 用不同前缀声明自己的模型需求，路由器据此选中对应后端，母 agent 与子 agent 可以在同一会话内并行使用不同模型。
+router.rs（多模型子 agent 的 provider 路由）。 按前缀方案把 LLM 调用分派给不同子 provider：子 agent 用不同前缀声明自己的模型需求，路由器据此选中对应后端，母 agent 与子 agent 可以在同一会话内并行使用不同模型。
 
-**call_policy.rs（每 turn 调用策略）。** 语音 turn 把 agent run 包在 `with_llm_call_policy(FailFast, ..)` 里：每个 provider 包装器与叶子 provider 都短路 retry、failover 与 hedge，低延迟优先。策略是 per-turn 的任务级输入，不是全局开关。
+call_policy.rs（每 turn 调用策略）。 语音 turn 把 agent run 包在 `with_llm_call_policy(FailFast, ..)` 里：每个 provider 包装器与叶子 provider 都短路 retry、failover 与 hedge，低延迟优先。策略是 per-turn 的任务级输入，不是全局开关。
 
-**throttle.rs（信号量节流）。** 用信号量限制 provider 的并发调用数，保护有严格并发配额的端点（多凭据时按池分摊）。它管的是"同时几条"，与 registry 管的"用哪个"正交。
+throttle.rs（信号量节流）。 用信号量限制 provider 的并发调用数，保护有严格并发配额的端点（多凭据时按池分摊）。它管的是"同时几条"，与 registry 管的"用哪个"正交。
 
-**credential_pool.rs（凭据池，M6.5）。** 见 3.3.3 节：多凭据轮换 + 持久化 cooldown，429/auth 失败驱动。
+credential_pool.rs（凭据池，M6.5）。 见 3.3.3 节：多凭据轮换 + 持久化 cooldown，429/auth 失败驱动。
 
-**local_context_probe.rs（本地窗口探测，#2135）。** 提交 10022387 引入。目录里 local / ollama / vllm 家族的窗口数是注册时的保守猜测（约 32K），因为注册时没人知道运营者启动了什么引擎。探测器（1300 行模块，`new` @ 201，`new_ollama` @ 226）在后台问服务器拿真实窗口：OpenAI 兼容端点走 props/models 两个 URL，Ollama 原生走 `GET /api/ps`（取运行中模型的分配窗口，无需 key）。探测结果经 trait 的 `ensure_ready()` 钩子（`provider.rs:65`）在首次 compaction 决策前 resolve，`context_window()` 不再是纯静态查表。要压过探测值，用 3.1.2 节的 per-profile `context_window` 覆盖（操作员覆盖 > 探测 > 目录）。
+local_context_probe.rs（本地窗口探测，#2135）。 提交 10022387 引入。目录里 local / ollama / vllm 家族的窗口数是注册时的保守猜测（约 32K），因为注册时没人知道运营者启动了什么引擎。探测器（1300 行模块，`new` @ 201，`new_ollama` @ 226）在后台问服务器拿真实窗口：OpenAI 兼容端点走 props/models 两个 URL，Ollama 原生走 `GET /api/ps`（取运行中模型的分配窗口，无需 key）。探测结果经 trait 的 `ensure_ready()` 钩子（`provider.rs:65`）在首次 compaction 决策前 resolve，`context_window()` 不再是纯静态查表。要压过探测值，用 3.1.2 节的 per-profile `context_window` 覆盖（操作员覆盖 > 探测 > 目录）。
 
 ---
 
@@ -465,7 +465,7 @@ flowchart TD
 >
 > octos-llm 在 Provider 抽象层大量使用 `Arc<dyn LlmProvider>`。这个选择值得与两种替代方案对比。
 >
-> **方案一：泛型（`impl LlmProvider` / `T: LlmProvider`）**
+> 方案一：泛型（`impl LlmProvider` / `T: LlmProvider`）
 >
 > 优势：
 > - 零运行时开销：编译器在每个调用点生成特化代码（单态化）
@@ -476,7 +476,7 @@ flowchart TD
 > - 容错链的组合会产生类型爆炸：`AdaptiveRouter<ProviderChain<RetryProvider<AnthropicProvider>>, ProviderChain<RetryProvider<OpenAIProvider>>>`
 > - 无法在运行时基于用户配置动态选择 Provider（泛型在编译期就确定了具体类型）
 >
-> **方案二：枚举分发（`enum Provider { Anthropic(...), OpenAI(...), ... }`）**
+> 方案二：枚举分发（`enum Provider { Anthropic(...), OpenAI(...), ... }`）
 >
 > 优势：
 > - 编译期确定所有变体，分支预测更友好
@@ -487,7 +487,7 @@ flowchart TD
 > - 对于 19 个 provider family，match 块会非常庞大
 > - 无法支持用户自定义 Provider（除非用 `Custom` 变体退化回 trait object）
 >
-> **octos 的选择：`Arc<dyn LlmProvider>`，原因如下。**
+> octos 的选择：`Arc<dyn LlmProvider>`，原因如下。
 >
 > 在 AI Agent 场景中，LLM 调用的网络延迟（100ms-10s）远大于 vtable 间接调用的开销（<1ns）。动态分发的性能代价在这里完全可以忽略。
 >
@@ -501,22 +501,22 @@ flowchart TD
 
 octos-llm 解决了 LLM Provider 集成的核心挑战：
 
-1. **LlmProvider trait**：最小化的统一接口，`chat()` + `chat_stream()` 双方法设计，`Send + Sync` 约束保证线程安全。Provider metadata 让上层能看到实际命中的 provider slot，而不是只看到组合包装器。
+1. LlmProvider trait：最小化的统一接口，`chat()` + `chat_stream()` 双方法设计，`Send + Sync` 约束保证线程安全。Provider metadata 让上层能看到实际命中的 provider slot，而不是只看到组合包装器。
 
-2. **Provider 注册表**：模型名子串匹配自动检测 Provider，工厂模式动态创建 `Arc<dyn LlmProvider>` 实例。特殊处理 O 系列模型的前缀匹配，并明确把 R9s、OpenRouter、Z.AI、NVIDIA、Ollama、vLLM 这类 `detect_patterns` 为空的 Provider 留给显式 provider / alias 选择。
+2. Provider 注册表：模型名子串匹配自动检测 Provider，工厂模式动态创建 `Arc<dyn LlmProvider>` 实例。特殊处理 O 系列模型的前缀匹配，并明确把 R9s、OpenRouter、Z.AI、NVIDIA、Ollama、vLLM 这类 `detect_patterns` 为空的 Provider 留给显式 provider / alias 选择。
 
-3. **三层容错链**：
+3. 三层容错链：
    - RetryProvider：指数退避（1s→2s→4s），智能解析 429 响应的 retry-after 头
    - ProviderChain：有序故障转移 + circuit breaker（3 次连续失败触发降级）
    - AdaptiveRouter：四因子 EMA 评分（稳定性 30% + 质量/吞吐 30% + 优先级 20% + 成本 20%）+ 对冲竞赛 + 探针策略
 
-4. **Credential pool 与 content classifier**：429/auth failure 会进入凭据 cooldown / refresh 路径；content classifier 发出 `routing.decision` 事件，把 Cheap/Strong tier 的选择暴露给 harness。
+4. Credential pool 与 content classifier：429/auth failure 会进入凭据 cooldown / refresh 路径；content classifier 发出 `routing.decision` 事件，把 Cheap/Strong tier 的选择暴露给 harness。
 
-5. **成本层与调度件**：cache 经济学（`cache_retention` 退出 + cache-write 感知定价）把"写不写缓存"变成显式决策；lane / router / call_policy / throttle / credential_pool / local_context_probe 六个调度件按场景挂在容错链之外。
+5. 成本层与调度件：cache 经济学（`cache_retention` 退出 + cache-write 感知定价）把"写不写缓存"变成显式决策；lane / router / call_policy / throttle / credential_pool / local_context_probe 六个调度件按场景挂在容错链之外。
 
-6. **SSE 流式解析**：字节级缓冲避免 UTF-8 分割问题，1MB 上限防止内存耗尽，`stream::unfold()` 构建有状态异步流。
+6. SSE 流式解析：字节级缓冲避免 UTF-8 分割问题，1MB 上限防止内存耗尽，`stream::unfold()` 构建有状态异步流。
 
-7. **`Arc<dyn Trait>` 选择**：网络延迟远大于 vtable 开销，动态分发换来的组合性和运行时灵活性物超所值。
+7. `Arc<dyn Trait>` 选择：网络延迟远大于 vtable 开销，动态分发换来的组合性和运行时灵活性物超所值。
 
 下一章将进入 octos-memory，看看混合搜索（BM25 + HNSW 向量索引）如何为 Agent 提供长期记忆能力。
 
@@ -524,23 +524,23 @@ octos-llm 解决了 LLM Provider 集成的核心挑战：
 
 ## 延伸阅读
 
-- **async-trait crate**：https://docs.rs/async-trait/latest/async_trait/ — 了解 `#[async_trait]` 宏如何将 async 方法编译为 trait object 兼容的形式
-- **SSE 协议规范**：HTML Living Standard "Server-Sent Events" 章节，https://html.spec.whatwg.org/multipage/server-sent-events.html
-- **指数退避算法**：Google Cloud 的 "Truncated exponential backoff" 文档，https://cloud.google.com/storage/docs/exponential-backoff
-- **Circuit Breaker 模式**：Martin Fowler, "CircuitBreaker"，https://martinfowler.com/bliki/CircuitBreaker.html
-- **Rust 动态分发**：*The Rust Programming Language* 第 17 章 "Using Trait Objects That Allow for Values of Different Types"
+- async-trait crate：https://docs.rs/async-trait/latest/async_trait/ — 了解 `#[async_trait]` 宏如何将 async 方法编译为 trait object 兼容的形式
+- SSE 协议规范：HTML Living Standard "Server-Sent Events" 章节，https://html.spec.whatwg.org/multipage/server-sent-events.html
+- 指数退避算法：Google Cloud 的 "Truncated exponential backoff" 文档，https://cloud.google.com/storage/docs/exponential-backoff
+- Circuit Breaker 模式：Martin Fowler, "CircuitBreaker"，https://martinfowler.com/bliki/CircuitBreaker.html
+- Rust 动态分发：*The Rust Programming Language* 第 17 章 "Using Trait Objects That Allow for Values of Different Types"
 
 ## 思考题
 
-1. **容错层次设计**：octos 的三层容错链中，如果把 RetryProvider 和 ProviderChain 合并为一层会怎样？分离的好处是什么？
+1. 容错层次设计：octos 的三层容错链中，如果把 RetryProvider 和 ProviderChain 合并为一层会怎样？分离的好处是什么？
 
-2. **对冲竞赛的成本模型**：假设你有两个 Provider：Provider A 价格 $10/M tokens、平均延迟 500ms；Provider B 价格 $3/M tokens、平均延迟 1500ms。在什么条件下开启 hedge racing 是划算的？
+2. 对冲竞赛的成本模型：假设你有两个 Provider：Provider A 价格 $10/M tokens、平均延迟 500ms；Provider B 价格 $3/M tokens、平均延迟 1500ms。在什么条件下开启 hedge racing 是划算的？
 
-3. **SSE 解析器的替代方案**：如果不用字节级缓冲，而是用 `String::from_utf8_lossy()` 处理每个 chunk，会产生什么问题？在什么场景下这些问题会变得可观测？
+3. SSE 解析器的替代方案：如果不用字节级缓冲，而是用 `String::from_utf8_lossy()` 处理每个 chunk，会产生什么问题？在什么场景下这些问题会变得可观测？
 
-4. **泛型 vs trait object 的边界**：如果 octos 只需要支持 3 个 Provider（Anthropic、OpenAI、Gemini），枚举分发是否是更好的选择？支持多少个 Provider 时动态分发才开始胜出？
+4. 泛型 vs trait object 的边界：如果 octos 只需要支持 3 个 Provider（Anthropic、OpenAI、Gemini），枚举分发是否是更好的选择？支持多少个 Provider 时动态分发才开始胜出？
 
 ---
 
-> **版本演化说明**
+> 版本演化说明
 > 本章分析基于 `../octos` main @ 9c157101（2026-09-02）。本次修订要点：① 注册表从 15 个 Provider 重列为 19 个 provider family（新增 vertex、moonshot-coding、zai-coding、local），注册叙事改为 registry/ 目录 + `discovery.rs:134` 的模型发现协议，不再出现 `enum Provider`；② trait 补入 `ensure_ready()` 与 `estimate_request_tokens()`，`provider_metadata_for_index` 签名改为 `Option<usize>`；③ timeout 叙事改讲 `CreateParams::http_timeout()` 与 `DEFAULT_LLM_STREAM_IDLE_TIMEOUT_SECS`；④ 新增 3.6「成本层」（cache 经济学，提交 f3aa07f0）与 3.7「车道与路由」（六个调度件模块与 10022387 本地窗口探测）；⑤ sampler passthrough（b0072e70）与 per-profile context_window 覆盖（3e479ce3，接线主体在 octos-cli）写入 3.1.2；⑥ 全部引用行号按 9c157101 逐条重标（adaptive.rs 已扩至 2795 行，catalog.rs 勘误为 274 行，见 assets/ch03-refcheck.md）。Provider 注册表与评分权重可能继续调整，但三层容错架构仍是理解 octos-llm 的主线。
