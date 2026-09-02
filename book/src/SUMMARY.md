@@ -38,6 +38,7 @@
 
 # 第四部分：双环 — 外环驱动内环
 
+- [第 19 章：octoscode：终端客户端与 UI Protocol](./part4/ch19.md)
 - [第 20 章：OctoLoop：外环协议 OLP v2](./part4/ch20.md)
 
 ---
