@@ -1,389 +1,246 @@
-# 第 7 章：安全纵深：从沙箱到 Prompt 注入防御
+# 第 7 章：安全纵深：沙箱 fail-closed、注入防御与能力授予
 
-> **定位**：本章以纵深防御的视角，从最外层的沙箱隔离到最内层的 prompt 注入检测，逐层展示 octos 的安全体系。前置依赖：第 6 章。适用场景：所有四类读者——Rust 开发者学习安全编码模式，AI 应用开发者学习 Agent 安全实践，octos 贡献者理解安全架构的设计理由。
+> **定位**：本章从纵深防御的视角完整展示 octos 的安全体系：进程沙箱的 fail-closed 语义、命令与派发策略、注入检测与输出脱敏，以及 WorkerGrant 能力授予模型。前置依赖：第 6 章（ToolPolicy 与 deny-wins 语义）。适用场景：需要理解或扩展沙箱后端、为 fleet worker 设计能力授予的读者（B/D 类），以及关心 Agent 安全实践的 AI 应用开发者（C 类）。
 
-AI Agent 的安全挑战独特而严峻：Agent 不只是处理数据——它执行代码、读写文件、发起网络请求。每一次工具调用都是一个潜在的攻击向量。更糟糕的是，Agent 的输入（用户消息、网页内容、文件内容）可能被恶意构造，通过 prompt 注入诱导 Agent 执行未授权操作。
+## 7.0 本章解决什么问题
 
-octos 的安全策略是纵深防御——多层独立的安全屏障，任何单层失败都不会导致系统沦陷：
+Agent 与普通软件的区别在于它执行动作：运行 shell 命令、读写文件、发起网络请求。每一项都是攻击面，而其中 shell 命令最危险，它能触达前两者的全部能力。安全设计因此面临一个具体问题：当操作者要求「命令必须在沙箱里跑」而宿主机上根本没有可用沙箱时，系统应该怎么办？
+
+旧版本的答案是尽力而为：探测不到后端就静默降级为无沙箱直通，命令照跑。这个答案在 2026-08-31 被推翻。`eb7c7221`（PR #2196，14 个文件，+1621/−158）把决策改成了 fail-closed：显式指定的模式无法兑现时拒绝执行，Auto 模式找不到后端时降级照旧但告警响亮。同一时期的 `ffcde205` 收紧了 cargo 授权，`crates/octos-fleet/src/grant.rs` 的 `WorkerGrant` 则把「worker 能做什么」从配置文件变成了带验证的类型。本章按四层展开这套体系：进程沙箱 → 命令与派发策略 → 注入与脱敏 → 能力授予。
+
+先澄清一个容易搞错的 crate 边界。`crates/octos-sandbox/src/main.rs:1` 的文档写着「octos-sandbox: platform sandbox helper binary」：它是一个平台助手二进制，Windows 上创建/复用 AppContainer profile 并在其中启动命令，Linux 上应用 Landlock 文件系统规则加 seccomp 拒绝清单后再 exec，macOS 与其他平台上是 no-op 直通。真正的沙箱子系统在 `crates/octos-agent/src/sandbox/`，下文所有 `sandbox/` 相对路径都指这个目录。
+
+## 7.1 进程沙箱：七个 impl 与 fail-closed 决策
+
+### 7.1.1 规模与全貌
+
+`sandbox/` 目录六个文件合计 5,347 行：
+
+| 文件 | 行数 | 首行文档 |
+|---|---:|---|
+| `sandbox/mod.rs` | 2190 | `//! Sandboxing for shell command execution.` |
+| `sandbox/macos.rs` | 1767 | `//! macOS sandbox using sandbox-exec.` |
+| `sandbox/bwrap.rs` | 498 | `//! Linux sandbox using bubblewrap (bwrap).` |
+| `sandbox/docker.rs` | 392 | `//! Docker container sandbox.` |
+| `sandbox/windows.rs` | 325 | `//! Windows sandbox using AppContainer via helper binary.` |
+| `sandbox/landlock.rs` | 175 | `//! Linux container sandbox using the octos-sandbox Landlock/seccomp helper.` |
+
+核心抽象是 `pub trait Sandbox`（`sandbox/mod.rs:443`），只有一个必须实现的方法 `wrap_command(&self, shell_command: &str, cwd: &Path) -> Command`：把 shell 命令字符串包装成受限的进程启动。围绕这个 trait 有恰好七个 `impl Sandbox for`：五个真后端加两个哨兵。
+
+| impl 位置 | 类型 | 定位 |
+|---|---|---|
+| `bwrap.rs:29` | `BwrapSandbox` | Linux bubblewrap，mount namespace 隔离 |
+| `docker.rs:36` | `DockerSandbox` | Docker 容器隔离，任何 OS 可用 |
+| `landlock.rs:27` | `LinuxContainerSandbox` | 委托 `octos-sandbox` 助手施加 Landlock + seccomp |
+| `macos.rs:185` | `MacosSandbox` | macOS sandbox-exec（SBPL profile） |
+| `windows.rs:46` | `AppContainerSandbox` | 委托 `octos-sandbox.exe` 创建 AppContainer |
+| `mod.rs:500` | `NoSandbox` | 哨兵：直通执行（`sh -c` / `cmd /C`） |
+| `mod.rs:914` | `RefusingSandbox` | 哨兵：拒绝执行，fail-closed 的载体 |
+
+两个哨兵值得注意：`NoSandbox` 不是「没有沙箱」这个概念的名字，而是一个真的类型（`pub struct NoSandbox;` 在 `mod.rs:498`），`is_noop()` 返回 true 让调用方可以检查；`RefusingSandbox`（`mod.rs:909` 定义 struct）的 `wrap_command` 永远不执行请求的命令，而是替换成一个打印拒绝文本到 stderr 并 exit 1 的命令。
+
+### 7.1.2 SandboxMode 与 MountMode
+
+配置层由两个枚举驱动。`MountMode`（`mod.rs:408`）控制 Docker 后端如何挂载 workspace，serde 小写命名，三个变体：`None`（:410，不挂载）、`ReadOnly`（:413，serde 名 `ro`）、`ReadWrite`（:417，默认，serde 名 `rw`）。
+
+`SandboxMode`（`mod.rs:423`）七个变体：
+
+- `Auto`（:426，默认）：文档注释写明「bwrap on Linux, sandbox-exec on macOS, AppContainer on Windows」
+- `Bwrap`（:428）、`Landlock`（:430）、`Macos`（:432）、`Docker`（:434）
+- `AppContainer`（:437，serde 名 `appcontainer`）
+- `None`（:439）：不沙箱，直通
+
+`Auto` 是唯一「找不到后端可以降级」的模式，其余显式模式都走 fail-closed 拒绝。这个不对称是 7.1.3 的主题。
+
+### 7.1.3 decide_sandbox：纯函数决策与 fail-closed
+
+`eb7c7221` 之前，`create_sandbox` 把 `cfg!` 平台探测与后端构造交织在一起，结果是两个问题：跨平台矩阵没法在开发机上测试（你在 macOS 上测不了 Linux 路径），以及显式模式悄悄降级。重构把决策抽成纯函数 `pub fn decide_sandbox(config, os, probe)`（`mod.rs:809`）：
+
+```rust
+pub fn decide_sandbox(
+    config: &SandboxConfig,
+    os: HostOs,
+    probe: &dyn HostBackendProbe,
+) -> SandboxDecision {
+```
+
+所有宿主机事实（`HostOs` 是数据枚举，`mod.rs:534`；后端可用性走 `HostBackendProbe` trait）都以参数传入，每个 OS 的完整矩阵可以从任何开发主机测试。返回 `SandboxDecision`（`mod.rs:744`）三值：`Confine(SandboxBackendChoice)`、`Unconfined(UnconfinedReason)`、`Refuse(SandboxUnavailable)`。契约直接写在函数文档里（`mod.rs:800-808`）：
+
+- `enabled = false` 与 `mode = "none"` 是显式 opt-out，直通且优先于 `fail_closed`
+- 显式后端模式无法兑现（OS 不对或后端缺失）时拒绝，绝不静默降级为无隔离
+- `Auto` 选最佳可用后端（原生优先，Docker 兜底）；全无时降级为直通但要告警；`fail_closed` 可把降级变成拒绝
+
+`UnconfinedReason`（`mod.rs:664`）区分三种直通原因：`Disabled`（`--danger-full-access` 设置的显式 opt-out）、`ExplicitNone`（`mode="none"`）、`AutoNoBackend`（Auto 全无后端，唯一合法的降级）。`SandboxUnavailable`（`mod.rs:694`）是类型化的拒绝理由，携带 `requested`、`reason` 和 per-OS 的 `remediation` 块（`remediation_for` 在 `mod.rs:754`，按 OS 给安装建议）。
+
+拒绝如何到达用户分两个受众，这是 #2196 review 的 MUST-FIX：`Display` 实现面向模型，写明「Shell/exec commands will keep refusing until then」；操作者修复建议只进日志和 `octos doctor`，不进模型上下文。`stderr_line()`（`mod.rs:724`）把拒绝文本过滤到只剩 `[A-Za-z0-9 ./:_=,-]`，确保嵌入 `sh -c 'echo ... >&2; exit 1'` 时不可能被引号逃逸重新变成命令执行。
+
+`create_sandbox`（`mod.rs:1005`）是决策到后端的投影：`Confine` 构造后端，`Unconfined` 返回 `NoSandbox` 并按原因记日志（`AutoNoBackend` 走 `warn_auto_unconfined_once`，`mod.rs:1039`，`std::sync::Once` 保证每进程只告警一次），`Refuse` 返回 `RefusingSandbox`。签名保持不可失败，大量构造点不用改；但结果上的每条命令都会带着类型化的 `SandboxUnavailable` 拒绝。
 
 ```mermaid
 flowchart TB
-    subgraph "第一层：进程隔离"
-        SB["沙箱<br/>bwrap / sandbox-exec / Windows helper / Docker"]
-    end
-    subgraph "第二层：网络安全"
-        SSRF["SSRF 防护<br/>私有 IP 阻断 + DNS 失败关闭"]
-    end
-    subgraph "第三层：工具安全"
-        TP["工具策略<br/>deny-wins + SafePolicy"]
-    end
-    subgraph "第四层：输出清理"
-        SAN["凭据脱敏<br/>7 类凭据 + data URI/hex 清理"]
-    end
-    subgraph "第五层：输入防护"
-        PG["Prompt Guard<br/>5 类威胁检测"]
-    end
-    subgraph "第零层：编译期保证"
-        UC["deny(unsafe_code)<br/>+ SecretString"]
-    end
-
-    SB --> SSRF --> TP --> SAN --> PG
-    UC -.->|"贯穿所有层"| SB
+    S["decide_sandbox(config, os, probe)<br/>mod.rs:809"] --> Q1{"enabled = false<br/>或 mode = none?"}
+    Q1 -->|是| U["Unconfined(Disabled / ExplicitNone)<br/>显式 opt-out，直通"]
+    Q1 -->|否| Q2{"mode 是显式后端?"}
+    Q2 -->|是| Q3{"OS 匹配且后端可用?"}
+    Q3 -->|是| C["Confine(backend)"]
+    Q3 -->|否| R["Refuse(SandboxUnavailable)<br/>RefusingSandbox：拒绝执行<br/>fail-closed"]
+    Q2 -->|Auto| Q4{"有可用后端?<br/>原生优先，Docker 兜底"}
+    Q4 -->|有| C
+    Q4 -->|无| Q5{"fail_closed?"}
+    Q5 -->|false| U2["Unconfined(AutoNoBackend)<br/>唯一合法降级，每进程告警一次"]
+    Q5 -->|true| R
 ```
 
-**图 7-1：octos 安全纵深分层。** 每一层独立工作，即使某一层被绕过，后续层仍然提供保护。
+**图 7-1：SandboxMode 解析与 fail-closed 决策流。** 显式模式不可兑现必然拒绝；只有 Auto 找不到后端才可能降级为直通。
 
----
+### 7.1.4 五个后端各自的实现要点
 
-## 7.1 沙箱后端与自动选择
+bwrap（Linux）：`wrap_command` 的顺序是：清掉 `BLOCKED_ENV_VARS` → `--ro-bind` 只读挂 `/usr`、`/lib`、`/lib64`、`/bin`、`/sbin`、`/etc` → `--tmpfs /tmp` 和 `--tmpfs /var/tmp`（先于 workspace bind，防止 workspace 在 /tmp 下时被 tmpfs 语义反噬）→ workspace `--bind` 或 `--ro-bind`（取决于 `workspace_write`）→ 可选的 `.git` 定向 rw bind（`repo_git_write`）→ `--dev`、`--proc` → `!allow_network` 时 `--unshare-net` → `--unshare-pid`、`--die-with-parent`。`repo_git_write` 的注释写得很清楚：这是窄授权，只 bind `<repo>/.git`，绝不 bind 整个 `/`，因为后者会把 `SSH_AUTH_SOCK`、`docker.sock` 这类宿主 AF_UNIX socket 暴露给沙箱内进程（`bwrap.rs:30-40` 的字段文档）。
 
-Shell 命令执行是 Agent 最危险的能力。octos 通过沙箱将命令执行隔离在受限环境中（`../octos/crates/octos-agent/src/sandbox/`）。
+Landlock（Linux）：`landlock.rs:27` 的 `LinuxContainerSandbox` 不自己施加任何限制，全部委托给 `octos-sandbox` 助手进程，让 Landlock 与 seccomp 的设置发生在 exec shell 之前。找不到助手时不是降级而是拒绝：构造一条 `echo 'sandbox error: octos-sandbox helper not found' >&2; exit 1` 命令（`landlock.rs:31-39`）。
 
-### 7.1.1 自动检测与选择
+macOS sandbox-exec：最厚的后端（1,767 行），生成 SBPL（sandbox profile 语言）profile。注入防御在 `macos.rs:205-212`：cwd 含控制字符或 SBPL 元字符（`(`、`)`、`\`、`"`）时直接拒绝执行，因为路径已验证不含引号，后续拼接无需转义。macOS 也是唯一能精确表达 #1976 写围栏的后端：每个 glob 变成一条 `(allow file-write* (regex ...))` 规则（`build_backend` 的注释，`mod.rs:1081-1085`）。
 
-`create_sandbox()`（`../octos/crates/octos-agent/src/sandbox/mod.rs:226-313`）不是“按平台写死一张表”，而是执行一条有序探测链：
+Docker：跨平台兜底。按 `MountMode` 挂 workspace（`ReadWrite` → `-v cwd:/workspace`，`ReadOnly` → 加 `:ro`，`None` → 不挂），支持 CPU/内存限制。`is_blocked_bind_source`（`docker.rs:24-33`）拒绝把 `docker.sock`、`/etc`、`/proc`、`/sys`、`/dev` 作为 bind source，cwd 命中危险源时整个命令拒绝执行。
 
-1. 如果 `sandbox.enabled = false`，直接返回 `NoSandbox`
-2. 如果显式配置了 `SandboxMode::{Bwrap,Macos,Docker,AppContainer,None}`，按指定模式创建
-3. 如果是 `SandboxMode::Auto`，则按顺序检查：
-   - Linux 且 `bwrap` 在 PATH 中
-   - macOS 且 `sandbox-exec` 可用
-   - Windows 且 `octos-sandbox` helper 可用
-   - Docker 可用
-   - 否则退回 `NoSandbox`
-
-这几点很关键。第一，Windows 自动模式检查的是 `octos-sandbox` helper，而不是抽象意义上的 “AppContainer 能力”；helper 既会在当前可执行文件同目录中查找，也会回退到 PATH 查找。第二，`NoSandbox` 是明确的失败回退路径：源码会打印警告，说明 shell 命令将“without isolation”运行，而不是静默降级。
-
-### 7.1.2 Bwrap（Linux）
-
-Bwrap（bubblewrap）是 Flatpak 项目的沙箱工具，使用 Linux namespaces 提供轻量级隔离（`../octos/crates/octos-agent/src/sandbox/bwrap.rs:14-50`）。octos 当前的包装过程更准确地说分成 8 步：
-
-1. **环境清理**（`bwrap.rs:18-21`）：移除 `BLOCKED_ENV_VARS` 中的 18 个危险变量
-2. **只读系统绑定**（`bwrap.rs:23-28`）：`/usr`、`/lib`、`/lib64`、`/bin`、`/sbin`、`/etc` 以 `--ro-bind` 挂载
-3. **工作目录绑定**（`bwrap.rs:30-32`）：用户工作区以 `--bind` 读写挂载
-4. **临时文件系统**（`bwrap.rs:34-35`）：`--tmpfs /tmp` 提供挥发性 scratch space
-5. **最小设备与 proc 视图**（`bwrap.rs:37-39`）：显式挂载 `--dev /dev` 和 `--proc /proc`
-6. **网络隔离**（`bwrap.rs:41-43`）：当 `allow_network = false` 时附加 `--unshare-net`
-7. **进程生命周期控制**（`bwrap.rs:45-47`）：`--unshare-pid` + `--die-with-parent` + `--chdir`
-8. **命令执行**（`bwrap.rs:48`）：最后才以 `sh -c` 执行目标命令
-
-这说明 Bwrap 这一层的职责不是“审计命令是否安全”，而是把命令放进一个更小的执行宇宙里：只读系统目录、受控工作区、可选断网、独立 PID 视图。
-
-### 7.1.3 macOS sandbox-exec 与 SBPL 注入防护
-
-macOS 使用 `sandbox-exec` 运行沙箱，策略用 SBPL（Seatbelt Profile Language）编写（`sandbox/macos.rs`）。SBPL 是一种 Lisp 风格的语言，使用括号分隔的表达式——这意味着**用户可控的路径名中的括号是潜在的注入向量**。
-
-octos 的防护措施（`macos.rs:22-32`）：
-
-```rust
-// 检查 cwd 是否包含 SBPL 元字符
-if cwd_str.bytes().any(|b| b < 0x20 || b == b'(' || b == b')' || b == b'\\' || b == b'"') {
-    tracing::error!("cwd contains SBPL metacharacters, refusing to execute");
-    // 返回一个只输出错误信息的命令，而非绕过沙箱执行
-    return error_command();
-}
-```
-
-如果工作目录路径包含 `(`、`)`、`\`、`"` 等 SBPL 元字符，octos **拒绝执行**——返回一个只输出错误消息的命令，而不是跳过沙箱执行原始命令。这是失败关闭（fail-closed）原则的体现。
-
-另一个细节：macOS 上 `/tmp` 是指向 `/private/tmp` 的符号链接。SBPL 的 `subpath` 规则基于真实路径（canonical path）。如果用户传入 `/tmp/work` 但 SBPL 规则写的是 `/tmp/work`，写操作会被拒绝（因为真实路径是 `/private/tmp/work`）。octos 通过 `std::fs::canonicalize()` 解析真实路径（`macos.rs:43-59`），并对解析后的路径再次检查 SBPL 元字符。
-
-### 7.1.4 Docker
-
-Docker 后端（`../octos/crates/octos-agent/src/sandbox/docker.rs:36-123`）提供容器级隔离，同时也有更高运行时开销：
-
-- Mount 模式：工作目录挂载为容器卷
-- 资源限制：CPU、内存、PID 数量限制
-- 网络隔离：可选的 `--network=none`
-- 容器 hardening：`--security-opt no-new-privileges` 与 `--cap-drop ALL`
-- 危险 bind mount 阻断：拒绝或跳过 `docker.sock`、`/etc`、`/proc`、`/sys`、`/dev` 等宿主逃逸高风险来源（`../octos/crates/octos-agent/src/sandbox/docker.rs:9-28`，`../octos/crates/octos-agent/src/sandbox/docker.rs:66-117`）
+AppContainer（Windows）：`windows.rs:46` 委托 `octos-sandbox.exe` 创建/复用 AppContainer profile。每个 octos profile 有自己的 AppContainer SID，提供默认拒绝的文件系统访问与可配置的网络隔离。
 
 ### 7.1.5 环境变量清理
 
-无论使用哪个后端，所有沙箱都会清理 18 个危险环境变量（`../octos/crates/octos-agent/src/sandbox/mod.rs:23-49`）：
+所有后端共享 `BLOCKED_ENV_VARS`（从 `octos-core` 转发，`mod.rs:33`），一个 20 项的清单，按注入面分组：Linux 动态库注入（`LD_PRELOAD` 等 3 项）、macOS dylib 注入（`DYLD_*` 5 项）、运行时代码注入（`NODE_OPTIONS`、`PYTHONSTARTUP` 等 7 项）、shell 启动注入（`BASH_ENV`、`ENV`、`ZDOTDIR`）。bwrap 与 Landlock 后端在进入沙箱前逐项 `env_remove`。
 
-| 类别 | 变量 | 攻击向量 |
-|------|------|---------|
-| Linux 动态链接 | `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT` | 注入恶意共享库 |
-| macOS 动态链接 | `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH` 等 5 个 | 注入恶意 dylib |
-| 运行时注入 | `NODE_OPTIONS`, `PYTHONSTARTUP`, `PYTHONPATH`, `PERL5OPT`, `RUBYOPT`, `RUBYLIB`, `JAVA_TOOL_OPTIONS` | 在子进程中注入代码 |
-| Shell 启动 | `BASH_ENV`, `ENV`, `ZDOTDIR` | 修改 Shell 启动行为 |
+### 7.1.6 cargo 授权：从尽力写到 lock-only
 
-`BLOCKED_ENV_VARS` 定义在沙箱模块里，但当前源码里的复用范围已经明显超出“沙箱 + MCP”这个最初口径。除了各沙箱后端与 MCP stdio server（`../octos/crates/octos-agent/src/mcp.rs:432-445`）之外，它还至少用于：
+`ffcde205`（4 个文件，+140/−82）解决的是编码 agent 的一个实际矛盾：沙箱把写权限收得越紧，`cargo build` 越容易死在编译之前。修复后的策略是默认 lock-only：可写集仅 `~/.cargo/.package-cache`（锁文件所需），registry index/cache/src、git checkout、rustup 安装全部只读；只有配置 `allow_network` 时才补上下载所需的写权限与网络。配套的 `allow_toolchains` 字段（`mod.rs:149`）默认 true，授予工具链运转必需的少量写路径，但 `~/.cargo/bin`（PATH 上的可写 shim 等于持久化后门）与 `~/.rustup/toolchains`（可写编译器二进制）明确不授。deny-wins 在这里同样生效：只读 workspace 或 #1976 写围栏会整体压制这些授予。
 
-- Hooks 子进程（`../octos/crates/octos-agent/src/hooks.rs:788-792`）
-- Browser / site crawl 启动 Chrome（`../octos/crates/octos-agent/src/tools/browser.rs:52-55`、`../octos/crates/octos-agent/src/tools/site_crawl.rs:94-96`）
-- 执行环境抽象的 env 过滤（`../octos/crates/octos-agent/src/subprocess_env.rs:128-137`）
-- 插件加载器与 CLI 进程管理（`../octos/crates/octos-agent/src/plugins/loader.rs:354-355`、`../octos/crates/octos-cli/src/process_manager.rs:286-336`）
-- `octos-plugin` lifecycle sandbox 与 `octos-swarm` dispatch gate 也维护同步语义，避免硬件/插件子进程重新引入动态链接或运行时注入变量。
+> **工程决策侧栏：为什么放弃「尽力而为的沙箱」**
+>
+> 旧语义下，操作者写 `sandbox.mode = "bwrap"`，宿主机上没有 bwrap，结果是命令无沙箱照跑。从安全角度这是 fail-open：配置表达了隔离意图，系统用「能跑就行」覆盖了它。问题在于这条路径不可见，用户以为有沙箱。`eb7c7221` 的取舍是：显式模式不可兑现就拒绝执行，把矛盾暴露给操作者（附 per-OS 修复建议与 `octos doctor` 入口）；Auto 保持降级（「最佳可用」本就是它的契约）但每进程告警一次，并提供 `sandbox.fail_closed` 开关把降级也变成拒绝。代价是可用性：装错环境的用户会看到命令全部拒绝。团队接受这个代价，理由是拒绝文本本身可操作，而静默无沙箱不可修复。
 
-更准确的理解方式是：`BLOCKED_ENV_VARS` 已经演化成“启动外部进程时的共享注入黑名单”，而不只是 sandbox backend 的内部细节。
+## 7.2 命令与派发策略：每条路径都有门
 
----
+沙箱管「命令在什么环境里跑」，策略层管「命令/工具能不能跑」。
 
-## 7.2 SSRF 防护
+policy.rs（746 行）：命令审批策略。`Decision`（`policy.rs:16`）三值 `Allow / Deny / Ask`，`ApprovalPolicy`（:28）决定 `Ask` 在无人值守时是弹审批还是直接失败（`Never`），`FilesystemScope`（:46）的 `Workspace / Host` 二值在 7.4 节的 grant 模型里会再次出现。ShellTool 的 SafePolicy（危险命令拒绝、whitespace 归一化、词边界检测）在第 6 章已展开，这里不重复；本章强调的是它明确自称「不是安全边界」，真正的边界是本节的沙箱与下一节的脱敏。
 
-当 Agent 通过 `web_fetch` 或 `browser` 工具发起网络请求时，SSRF（Server-Side Request Forgery）保护确保请求不会到达内部网络（`../octos/crates/octos-agent/src/tools/ssrf.rs`）。
+dispatch_policy.rs（566 行）：MCP-agent 派发前策略门。模块文档（`dispatch_policy.rs:1-10`）记录了它的来历：#714 之前 `SpawnTool` 的 `agent_mcp` 分支直接派发，完全绕过策略，哪怕 `octos serve` 在 swarm 侧装了门。把门提到本 crate 让两个调用点（`SpawnTool::agent_mcp` 分支与 `octos_swarm::Swarm` 派发器）执行同一形状的检查：工具策略、审批、sandbox-required、env 允许/拒绝清单。每个失败产生带稳定标签的 `GateDenial`（`dispatch_policy.rs:253`，`last_dispatch_outcome` 字段），其中 `approval_unavailable`（需要审批但没有接审批器）与 `sandbox_required`（策略要求沙箱后端但后端不自报沙箱）都 fail-closed，不落空到派发。
 
-### 7.2.1 私有 IP 阻断
+permissions.rs（167 行）：机器人工具的监督安全分级。`SafetyTier`（`permissions.rs:19`）四级从低到高 `Observe < SafeMotion < FullActuation < EmergencyOverride`，通过 `ToolPolicy` 的 `group:robot:<tier>` 分组执行而非独立 trait 方法。物理世界的风险分级与本章的数字沙箱共用同一套 deny-wins 机制，此处一段带过。
 
-`is_private_ip()`（`ssrf.rs:88-116`）阻断以下地址范围：
+## 7.3 注入检测与输出脱敏
 
-**IPv4**：
-- `127.0.0.0/8`（回环）
-- `10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`（私有）
-- `169.254.0.0/16`（链路本地——包含 AWS 元数据端点 `169.254.169.254`）
-- `0.0.0.0`（未指定）
+### 7.3.1 prompt_guard：明文注入的检测层
 
-**IPv6**：
-- `::1`（回环）、`::`（未指定）
-- `fc00::/7`（ULA，唯一本地地址）
-- `fe80::/10`（链路本地）
-- `fec0::/10`（站点本地，已弃用但仍可路由）
-- `ff00::/8`（多播）
-- `::ffff:x.x.x.x`（IPv4 映射的 IPv6 地址——防止通过 IPv6 语法绕过 IPv4 检查）
+`prompt_guard.rs`（772 行）扫描工具输出与用户消息中的注入模式。`ThreatKind`（`prompt_guard.rs:29`）五类：`SystemOverride`（覆盖系统提示）、`RoleConfusion`（「System: you are now...」式角色混淆）、`ToolCallInjection`（注入工具调用 JSON/XML）、`SecretExtraction`（套取系统提示或密钥）、`InstructionInjection`（「you must / always respond with」式通用指令注入）。入口 `pub fn scan(text)` 在 :195。
 
-### 7.2.2 三阶段 SSRF 验证
+这个模块的文档（`prompt_guard.rs:5-19`）第一句就自我定位：「**Not a security boundary.**」它用正则匹配朴素明文注入，可被 base64 编码、URL 编码、HTML 实体、Unicode 同形字、零宽字符、RTL 覆盖字符绕过，这些都记录在测试套件里作为已知局限。真正的缓解是架构性的：沙箱隔离保证不管 prompt 状态如何工具层损害有限，工具策略限制可调用的工具集，human-in-the-loop（`before_tool_call` hook exit 1）拦截高影响动作待人工批准。prompt_guard 提供的是日志与尽力脱敏这层额外防线，不是前三者的替代品。
 
-`check_ssrf_with_addrs()`（`ssrf.rs:21-64`）实现三阶段验证：
+### 7.3.2 sanitize：工具输出进上下文前的清洗
 
-**阶段 1：主机名字符串检查**（`ssrf.rs:27-29`）。快速检查 `localhost`、`localhost.` 和字面 IP 地址（如 `192.168.1.1`），立即拒绝已知危险主机。
+`sanitize.rs`（245 行）的 `sanitize_tool_output`（:90）在工具结果回喂 LLM 前剥掉三类内容。噪声类：base64 data URI（`data:...;base64,<64+ 字符>`，:13）与 64 位以上连续 hex（SHA-256、原始密钥，:16），目的是省上下文。凭据类七个正则：OpenAI（`sk-` 前缀，:24）、Anthropic（`sk-ant-`）、AWS（`AKIA` + 16 位大写）、GitHub（`ghp_`/`gho_`/`ghs_`/`ghr_`/`github_pat_`）、GitLab（`glpat-`）、Bearer token、以及通用赋值模式（`password|secret|api_key|... = "..."`）。`redact_credential`（:55）保留前 4 个可见字符加 `[credential-redacted]` 标记，兼顾可辨识与不泄漏。`scrub_credentials`（:62）的注释强调顺序：Anthropic 先于 OpenAI 处理，避免 `sk-ant-...` 被 `sk-` 规则截断匹配。
 
-**阶段 2：字面 IP 跳过**（`ssrf.rs:31-36`）。如果 URL 中的 host 是字面 IP（已通过阶段 1 验证），不需要 DNS 解析，直接放行。
+### 7.3.3 SSRF：网络工具的入口检查
 
-**阶段 3：DNS 解析 + 结果验证**（`ssrf.rs:38-63`）。对域名进行 DNS 解析，检查**每一个**返回的 IP 地址。如果任何一个 IP 是私有地址，拒绝整个请求。
+`tools/ssrf.rs`（620 行）被 `web_fetch` 与 `browser` 两个工具共享。`check_ssrf_with_addrs`（:24）的流程：解析 URL → `is_private_host`（:228）拦 `localhost` 与字面私有 IP → 域名走 DNS 解析，答案集经 `validate_answer_set`（:69）做 DNS pinning（防 rebinding：校验时解析到的地址绑定到实际抓取，TOCTOU 不复存在）。DNS 失败 fail-closed 当作阻断处理，注释写明原因：攻击者可以让校验时 DNS 失败、抓取时成功。
 
-### 7.2.3 DNS 失败关闭
+`is_private_ip`（:258）的范围清单超出 std 谓词：IPv4 除 `is_private`/`is_link_local`/`is_loopback`/`is_unspecified` 外，`is_special_purpose_v4`（:244）显式匹配 std 夜行版才有的段：CGNAT 100.64.0.0/10（运营商级 NAT）、192.0.0.0/24（IETF 协议分配）、198.18.0.0/15（基准测试）、224.0.0.0/4（组播）与 240.0.0.0/4（保留）。IPv6 覆盖 loopback、`::`、组播、ULA `fc00::/7`、链路本地 `fe80::/10`、废弃的站点本地 `fec0::/10`，以及两条映射规则：IPv4-mapped `::ffff:x.x.x.x` 递归回 IPv4 检查，IPv4-compatible `::x.x.x.x` 同样处理。漏掉映射规则是经典绕过，测试里有专门用例（:580、:590）。
 
-阶段 3 的关键设计是**失败关闭**（fail-close）：
+## 7.4 WorkerGrant：能力授予的类型化
+
+前三层防御都在「限制」侧。fleet 架构（第 16 章讲装配）还需要反向的能力：master 派任务给 worker 时，如何精确表达「这个 worker 可以用网络、只能写这三个路径」？答案是 `crates/octos-fleet/src/grant.rs`（714 行）的 `WorkerGrant`，一个带验证的类型，而不是散落的配置项。
+
+### 7.4.1 三个粒度轴
+
+`NetworkGrant`（`grant.rs:76`）三值：`None`（默认，零网络）、`Hosts(Vec<String>)`（按主机允许表）、`Full`（原始出网全开）。关键语义在方法注释里：`allows_raw_egress` 仅对 `Full` 为真，`Hosts` 刻意保持原始出网关闭，它的许可完全通过被授予的 web 工具按主机允许表实现，shell 永远 `curl` 不到允许表之外。文档同时坦承 v1 局限：原始网络是全有或全无，按主机过滤原始流量需要内核级 egress proxy，`Hosts` 只覆盖 web 工具的 HTTP(S)，这是记录在案的未解问题。
+
+`FsGrant`（`grant.rs:127`）刻意粗粒度：`Workspace`（默认，仅 worker 自己的尝试目录可读写）或 `Host`（全盘读写，须操作者显式授予）。v1 不做按路径的文件系统允许表，所以诚实的授予也是二值的。
+
+`WorkerGrant`（`grant.rs:151`）五个字段把这些轴组装成一个可序列化、可验证的整体：
 
 ```rust
-match tokio::net::lookup_host(format!("{host}:{port}")).await {
-    Ok(addrs) => {
-        for addr in addrs {
-            if is_private_ip(&addr.ip()) {
-                return Err("DNS resolved to private IP".into());
-            }
-        }
-        Ok(SsrfCheckResult { resolved_addrs: safe_addrs })
-    }
-    Err(e) => {
-        // DNS 失败 → 阻断请求，不是放行！
-        Err(format!("DNS resolution failed — blocking request (fail closed): {e}"))
-    }
+pub struct WorkerGrant {
+    #[serde(default)]
+    pub network: NetworkGrant,        // :154，默认 None
+    #[serde(default = "base_tools_vec")]
+    pub tools: Vec<String>,           // :157，默认 BASE_TOOLS 七项
+    #[serde(default)]
+    pub fs: FsGrant,                  // :160，默认 Workspace
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_paths: Option<Vec<String>>, // :179，#1976 写围栏
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub create_only: bool,            // :189，仅创建不覆盖
 }
 ```
 
-如果 DNS 解析失败，请求被阻断而非放行。这防止了 DNS 重绑定攻击的一个变种：攻击者在检查时让 DNS 解析失败（如果默认放行就能绕过检查），在实际请求时返回内部 IP。
+每个字段的 `#[serde(default)]` 有一层设计：grant 出现之前持久化的旧任务（或什么都没指定的 master）加载为 `WorkerGrant::minimal()`，最小权限是默认值，旧记录无需 schema 升级就可读。`skip_serializing_if` 让无围栏的 grant 序列化出与 pre-#1976 逐字节相同的形状，旧读者读新记录看不到新键。
 
-### 7.2.4 IPv4 映射的 IPv6 地址
+### 7.4.2 #1976 写围栏：三层语义
 
-一个经常被遗忘的攻击向量：`::ffff:192.168.1.1` 是一个合法的 IPv6 地址，但它实际指向 IPv4 的 `192.168.1.1`。如果 SSRF 防护只检查 IPv4 的 `is_private()` 而不处理 IPv6 的 mapped 地址，攻击者可以用 IPv6 语法绕过检查。
+`write_paths` 是 issue 1976 引入的按路径写围栏，三种取值各有语义：
 
-octos 在 `is_private_ip()`（`ssrf.rs:96-113`）中显式处理了这种情况：
+- `None`（默认）：无围栏，二值 `fs` 独自管辖写权限，行为与 pre-#1976 worker 逐字节一致
+- `Some(vec![])`：一致的只读围栏，workspace 内什么都不能写
+- `Some(列表)`：列表内可写，workspace 其余部分只读
 
-```rust
-// IPv6 检查包含 mapped IPv4
-|| v6.to_ipv4_mapped().is_some_and(|v4| is_private_v4(v4))
-|| v6.to_ipv4().is_some_and(|v4| is_private_v4(v4))
+v1 模式语法刻意收窄：workspace 相对路径、`/` 分隔、段内 `*`（任意字符）与 `?`（单字符）通配，没有 `**`、`[...]`、`{...}`。原因写在字段文档里：这个语法是工具层匹配器（globset，`literal_separator`）与沙箱翻译（SBPL regex）能完全相同表达的交集，两层对「授予了什么」永远不可能产生分歧。`validate_write_path_pattern`（`grant.rs:307`）逐条拒绝绝对路径、`..`、控制字节、SBPL 元字符、`:`（Docker mount 分隔符/Windows 盘符）与两类通配语法。
+
+`create_only: true` 表示允许表内的路径只能创建不能覆盖/编辑/删除（文件工具层的 `O_CREAT|O_EXCL` 语义；`edit_file` 无论是否在表内都直接拒绝）。沙箱层只能执行路径围栏，没有 OS 后端能区分创建与覆盖，所以 create_only 的不覆盖一半由工具层执行，这是文档写明的降级。
+
+围栏下各后端的 shell 侧表达不一，deny-wins 保证没有后端放宽围栏（`mod.rs:955-1000` 三个函数）：macOS 精确表达（per-glob SBPL regex）；bwrap/Landlock/AppContainer 无法表达按 glob 的 shell 写，workspace 对 shell 整体降为只读，授予路径仅通过受围栏的文件工具保持可写（`fence_degraded_workspace_write`，:955，构造时告警一次）；Docker 同理挂 `:ro`（`fence_degraded_docker`，:970）；解析结果是无沙箱时告警 shell 围栏完全未执行（`warn_fence_unenforced`）。
+
+```mermaid
+flowchart LR
+    subgraph G["WorkerGrant（grant.rs:151）"]
+        N["network: NetworkGrant<br/>None / Hosts / Full"]
+        T["tools: Vec&lt;String&gt;<br/>默认 BASE_TOOLS 七项"]
+        F["fs: FsGrant<br/>Workspace / Host"]
+        W["write_paths: Option&lt;Vec&lt;String&gt;&gt;<br/>#1976 写围栏"]
+        CO["create_only: bool<br/>仅创建不覆盖"]
+    end
+    V["validate()（grant.rs:247）"] --> G
+    G --> SB["沙箱投影（mod.rs:955-1000）<br/>macOS 精确 / 其余降级只读"]
+    G --> FT["工具层执行<br/>globset 围栏 + O_CREAT|O_EXCL"]
 ```
 
----
+**图 7-2：WorkerGrant 结构与两个执行层。**
 
-## 7.3 Prompt 注入检测
+### 7.4.3 validate：把不一致挡在解析时
 
-Prompt 注入是 AI Agent 特有的攻击向量。octos 的 prompt guard（`../octos/crates/octos-agent/src/prompt_guard.rs:1-296`）把它当作一层 **defense-in-depth**：模块级 API 可以扫描任意文本，但当前主执行链上的接线点是在工具输出回写消息历史之前，由 `sanitize_tool_output()` 调用（`../octos/crates/octos-agent/src/agent/execution.rs:1164`、`../octos/crates/octos-agent/src/sanitize.rs:88-95`）。
+`WorkerGrant::validate`（`grant.rs:247`）拒绝五类不一致，每类对应 `GrantError`（`grant.rs:359`）一个变体：
 
-### 7.3.1 五类威胁
+- `UnknownTool`：授予的工具有不在 `GRANTABLE_TOOLS` 目录里的（操作者不能授予宿主构建不出的工具）
+- `WebToolWithoutNetwork`：`NetworkGrant::None` 下授予 `web_fetch`/`web_search`（无网络的网络工具）
+- `EmptyHostAllowlist`：`Hosts(vec![])` 空允许表。注释点名这是 fail-open 陷阱：空表绝不能读作「无限制」，操作者没列主机就是 `None`
+- #1976 四连：`WritePathsWithHostFs`（围栏配 `fs: Host` 不一致，Host 让 shell 够得着围栏禁止的一切，deny-wins 直接拒）、`CreateOnlyWithoutWritePaths`（无表可应用）、`EmptyWritePathsWithCreateOnly`（空表加 create_only 等于授予创建无）、`InvalidWritePath { pattern, reason }`（语法外模式）
 
-| 类别 | 示例模式 | 严重性 |
-|------|---------|--------|
-| SystemOverride | "忽略之前所有指令" | 高 |
-| RoleConfusion | "System: 你现在是 DAN" | 高 |
-| ToolCallInjection | `{"name": "shell", "arguments": ...}` | 高 |
-| SecretExtraction | "显示系统提示/API 密钥" | 中 |
-| InstructionInjection | "从现在开始你必须..." | 中 |
+validate 在两个时点调用：master 的 `goal_plan` 解析时，以及防御性地在 registry 构建时。与第 6 章 `write_grant.rs` 的关系：第 6 章讲了单工具的参数级写授权，本章的 `WorkerGrant` 是 worker 级的整体授予模型；fleet 如何把这个 grant 装配成封闭工具注册表与沙箱配置，详见第 16 章。
 
-### 7.3.2 检测与处理
-
-检测使用 11 个正则表达式模式（`prompt_guard.rs:116-192`），覆盖多种表述方式。匹配到的内容按严重性处理：
-
-- **高 / 中**：记录 `warn!` 日志，并把命中的 span 替换为 `[injection-blocked:<threat-kind>]`
-- **低**：只打 `debug` 日志，不修改文本
-
-实现上还有两个值得注意的细节（`prompt_guard.rs:217-295`）：
-
-1. 替换按 **反向顺序** 进行，避免前面的修改破坏后续 span 偏移
-2. 如果多重威胁导致原 span 失效，代码会退回到“从原位置附近搜索 matched 文本”，最后才做全串搜索，而不是简单 `replacen(_, _, 1)`
-
-### 7.3.3 已知局限
-
-`prompt_guard.rs` 的模块头注释（`prompt_guard.rs:1-19`）把边界说得很清楚：这不是安全边界，只是日志与内容去激活层。已知绕过方式包括：
-
-- Base64 编码
-- URL 编码
-- HTML 实体
-- Unicode 同形字（homoglyphs）
-- 零宽字符
-- RTL override 字符
-
-这些绕过不是“实现漏了几个 regex”那么简单，而是纯文本模式匹配的结构性上限。因此本章必须把 prompt guard 放在正确的位置上理解：真正的约束来自沙箱、工具策略以及必要时的 human-in-the-loop hook；prompt guard 负责降低朴素明文注入直接进入上下文的概率。
-
----
-
-## 7.4 凭据脱敏
-
-### 7.4.1 七类凭据模式 + 两类高噪声模式
-
-`sanitize.rs`（`../octos/crates/octos-agent/src/sanitize.rs:1-95`）把输出清理拆成两层：先移除高噪声/高风险片段，再脱敏具体凭据模式。
-
-| 模式 | 匹配对象 | 正则 |
-|------|---------|------|
-| OPENAI_KEY_RE | OpenAI API Key | `sk-[A-Za-z0-9_-]{20,}` |
-| ANTHROPIC_KEY_RE | Anthropic API Key | `sk-ant-[A-Za-z0-9_-]{20,}` |
-| AWS_KEY_RE | AWS Access Key ID | `AKIA[0-9A-Z]{16}` |
-| GITHUB_TOKEN_RE | GitHub Token | `(?:ghp_\|gho_\|ghs_\|ghr_\|github_pat_)...` |
-| GITLAB_TOKEN_RE | GitLab PAT | `glpat-[A-Za-z0-9_-]{20,}` |
-| BEARER_RE | Bearer Token | `Bearer\s+[A-Za-z0-9_.+/=-]{20,}` |
-| SECRET_ASSIGN_RE | 通用密钥赋值 | `(?i)password\|secret\|api_key...=...` |
-
-上表是 7 类凭据模式；此外还有两类“不是凭据本身，但会污染上下文或携带敏感载荷”的模式：
-
-- `DATA_URI_RE`：base64 数据 URI
-- `HEX_RE`：64+ 连续十六进制串，覆盖 SHA-256、SHA-512、原始 key material 等
-
-### 7.4.2 脱敏策略
-
-检测到凭据后，保留前 4 个可见字符作为上下文参考，其余替换为 `[credential-redacted]`。例如：
-
-```
-sk-proj-abc123... → sk-p...[credential-redacted]
-```
-
-保留前缀让开发者在调试时能快速识别是哪种类型的凭据被脱敏了。
-
-### 7.4.3 工具输出清理
-
-`sanitize_tool_output()` 在每次工具执行后应用，按顺序清理（`sanitize.rs:88-95`）：
-
-1. Base64 数据 URI → `[base64-data-redacted]`
-2. 长十六进制串 → `[hex-redacted]`
-3. 各类凭据 → 保留前缀 + `[credential-redacted]`
-4. Prompt 注入内容 → `[injection-blocked:<kind>]`
-
----
-
-## 7.5 ShellTool SafePolicy
-
-`ShellTool::new()` 默认就注入 `SafePolicy::default()`（`../octos/crates/octos-agent/src/tools/shell.rs:33-41`），因此它不是“可选增强项”，而是 shell 工具的默认前置检查。`execute()` 会先跑 policy，再决定是拒绝、要求批准，还是继续进入沙箱执行（`../octos/crates/octos-agent/src/tools/shell.rs:189-244`）。
-
-### 7.5.1 危险命令拒绝
-
-6 个 deny 模式（直接拒绝执行）：
-
-```
-rm -rf /          # 删除根文件系统
-rm -rf /*         # 删除根目录下所有文件
-dd if=             # 原始磁盘操作
-mkfs               # 格式化文件系统
-:(){:|:&};:        # Fork bomb
-chmod -R 777 /     # 递归修改根目录权限
-```
-
-4 个 ask 模式（需要用户确认，非交互环境下等同于拒绝）：
-
-```
-sudo               # 提权操作
-rm -rf             # 递归删除（不限于根目录）
-git push --force   # 强制推送
-git reset --hard   # 硬重置
-```
-
-### 7.5.2 Whitespace 归一化
-
-在匹配前，命令字符串经过空白字符归一化（`policy.rs:76-78`）——多个空格、Tab、换行都被压缩为单个空格。这防止了 `rm  -rf  /` 或 `rm\t-rf\t/` 的简单绕过。
-
-### 7.5.3 词边界检测
-
-模式匹配使用词边界检测（`policy.rs:84-103`），防止误判。例如，"sudo" 只在作为独立单词时匹配，不会匹配 "pseudocode" 中的子串。
-
-### 7.5.4 SafePolicy 不是安全边界
-
-源码文档对这点说得比“不是安全边界”更狠（`../octos/crates/octos-agent/src/policy.rs:36-46`）：它只是在 whitespace-normalized 字符串上匹配一个很短的 deny/ask 列表，能抓住的主要是 `rm -rf /`、fork bomb 这种显眼事故。Shell 元字符、变量展开、编码技巧，以及任何不在列表里的危险命令都可以绕过它。
-
-因此，SafePolicy 的真实定位不是“阻止恶意攻击者”，而是降低 LLM 误生成明显危险命令时的爆炸半径。真正的执行边界仍然是沙箱。另一个常被忽略的细节是：对 `Ask` 决策，当前 `ShellTool` 会先尝试 `TOOL_APPROVAL_CTX`；没有交互式 requester 时直接拒绝，有 requester 时会发出 `ToolApprovalRequest`，用户拒绝则返回失败（`../octos/crates/octos-agent/src/tools/shell.rs:207-241`）。
-
----
-
-## 7.6 基础设施安全
-
-### 7.6.1 deny(unsafe_code)
-
-workspace 级别的 `deny(unsafe_code)`（`../octos/Cargo.toml:40-41`）把“自有代码中不写 `unsafe`”提升成了 workspace 约束。当前成员不仅包括核心 runtime crate，还包括 `octos-cli`、`octos-pipeline`、`octos-plugin`、`octos-sandbox`、`octos-swarm` 以及多个 app/platform skills（`../octos/Cargo.toml:1-30`）。这一点比“具体有多少个 crate、多少行代码”更重要，因为真正被固定下来的是工程纪律，而不是某个会漂移的数字。
-
-### 7.6.2 SecretString
-
-API 密钥使用 `secrecy` crate 的 `SecretString` 类型存储。当前 `octos-llm` 中的 OpenAI、Anthropic、OpenRouter、Gemini、Embedding/OpenAI Responses provider 都把 `api_key` 字段定义为 `SecretString`，只有在真正组装 HTTP header 时才显式 `expose_secret()`（例如 `../octos/crates/octos-llm/src/openai.rs:95,322,431`、`../octos/crates/octos-llm/src/anthropic.rs:24,130,213`、`../octos/crates/octos-llm/src/gemini.rs:24,110,255`）。这比“日志里会不会打印出来”更进一步：它让明文暴露点在代码里变成显式、可审查的调用点。
-
----
-
-> ### 工程决策侧栏：workspace 级 deny(unsafe_code) 的实践意义
+> **工程决策侧栏：为什么 grant 是类型而不是配置约定**
 >
-> `deny(unsafe_code)` 在 Rust 社区中并不罕见，但把它提升到 workspace 级别，约束 CLI、agent runtime、pipeline、sandbox helper 与 skills 相关 crate 一起遵守，是一个值得讨论的决策。
->
-> **支持的理由：**
-> - 对于一个执行用户代码的 Agent 平台，内存安全漏洞的后果特别严重——攻击者可能通过 prompt 注入触发内存安全 bug
-> - 消除了代码审查中检查 `unsafe` 正确性的负担——没有 `unsafe` 就没有这个负担
-> - 所有系统交互通过 `std::fs`、`std::process`、`tokio::fs` 等安全抽象完成，标准库的 `unsafe` 代码由 Rust 团队维护
->
-> **代价：**
-> - 无法使用某些需要 `unsafe` 的优化（如 SIMD 加速的 JSON 解析器 `simd-json`）
-> - 某些平台特定功能（如 Windows AppContainer）需要通过独立的辅助二进制程序（`octos-sandbox`）实现
-> - 依赖的第三方 crate 仍然可以包含 `unsafe`——`deny(unsafe_code)` 只约束自己的代码
->
-> **octos 的判断：** 对于一个执行不可信输入（LLM 生成的工具调用参数）的系统，消除自有代码中的内存安全风险是值得付出性能代价的。第三方 crate 的 `unsafe` 由 crate 作者和社区审计负责。
+> 「worker 能做什么」如果只是若干独立配置项（一个网络布尔、一个工具列表、一个路径列表），不一致组合要到运行时才暴露，甚至永远不暴露（空允许表被读成无限制就是实例）。`WorkerGrant` 把五轴收进一个 struct，`validate` 把跨字段不一致在解析时类型化拒绝，`GrantError` 七个变体每个都能直接转成给操作者的错误消息。`minimal()` 作为 serde 默认值把最小权限变成无需声明的基线，旧记录自动落入。代价是新增能力要同时扩 `GRANTABLE_TOOLS` 目录、validate 规则与错误变体，三处必须同步；换来的是「授予了什么」在序列化形状、注册表审计键（`sorted_tools`）与错误消息三处始终一致。
 
----
+## 7.5 本章回顾
 
-## 7.7 本章回顾
+本章沿四层展示了 octos 的安全纵深。进程沙箱层：`sandbox/` 六文件 5,347 行、七个 `impl Sandbox for`（五后端加 `NoSandbox`/`RefusingSandbox` 两哨兵），`decide_sandbox` 纯函数（`mod.rs:809`）执行 fail-closed 契约，显式模式不可兑现即拒绝，Auto 降级告警一次且可用 `fail_closed` 升级为拒绝。策略层：policy.rs 的命令审批、dispatch_policy.rs 补上 MCP 派发旁路（#714）、permissions.rs 的机器人安全分级。注入与脱敏层：prompt_guard 自认非安全边界的明文检测、sanitize 的七凭据正则与 DNS pinning 的 SSRF 检查。能力层：`WorkerGrant` 五字段（network/tools/fs/write_paths/create_only）配 `validate` 的五类不一致拒绝，#1976 写围栏经沙箱投影与工具层双层执行。
 
-octos 的安全体系是纵深防御的实践：
-
-1. **沙箱隔离**：自动模式按 `bwrap -> sandbox-exec -> Windows helper -> Docker -> NoSandbox` 链路探测后端，并配合 18 个环境变量清理隔离命令执行。
-
-2. **SSRF 防护**：IPv4/IPv6 私有地址全面阻断 + DNS 失败关闭，防止内部网络探测。
-
-3. **工具策略**：deny-wins 语义 + SafePolicy 危险命令拦截，控制 Agent 的行为边界。
-
-4. **凭据脱敏**：7 类凭据模式 + 2 类高噪声模式，工具输出在回写历史前统一清理。
-
-5. **Prompt Guard**：5 类威胁、11 个检测模式，中高严重性会被去激活，但它只是附加层，不是安全边界。
-
-6. **基础设施**：`deny(unsafe_code)` 消除内存安全漏洞，`SecretString` 防止凭据泄漏到日志。
-
-没有任何单一安全措施是完美的——SafePolicy 可以被 Shell 元字符绕过，Prompt Guard 可以被编码变体绕过。但每一层都缩小了攻击面，让攻击者需要同时绕过多层防御才能造成损害。这就是纵深防御的价值。
-
----
+贯穿全章的一条线是 deny-wins 与 fail-closed 在每一层的重复出现：工具策略 deny 优先于 allow（第 6 章），沙箱显式模式不可兑现拒绝而非降级，空允许表拒绝而非读作无限制，围栏配 Host fs 拒绝而非取宽者。同一原则在四个抽象层级上的相同形状，比任何单点的强度更能说明这套体系的设计一致性。
 
 ## 延伸阅读
 
-- **OWASP Top 10 for LLM Applications**：https://owasp.org/www-project-top-10-for-large-language-model-applications/
-- **Bubblewrap (bwrap)**：https://github.com/containers/bubblewrap — Linux 用户空间沙箱
-- **macOS Sandbox Profile Language**：Apple 开发者文档 "Sandbox Design Guide"
-- **SSRF 攻击**：PortSwigger Web Security Academy "Server-side request forgery" — 理解 SSRF 攻击向量
-- **Prompt Injection**：Simon Willison, "Prompt injection attacks against GPT-3" — prompt 注入的早期研究
+- Landlock 文档与 seccomp BPF 手册（`man 2 seccomp`）：`landlock.rs` 委托助手所施加的两类内核机制
+- Apple Sandbox Guide（SBPL 参考）：`macos.rs` 生成 profile 的语言
+- bubblewrap 项目文档：`bwrap.rs` 使用的 mount namespace 与 `--die-with-parent` 语义
+- OWASP SSRF Prevention Cheat Sheet：`tools/ssrf.rs` 阻断范围清单的对照参考
+- issue #1976 与 PR #2196（`eb7c7221`）、`ffcde205` 的 commit message：本章三个主线的原始讨论
 
 ## 思考题
 
-1. **沙箱逃逸**：假设攻击者通过 prompt 注入让 Agent 在沙箱内执行了恶意命令，但命令被沙箱限制在工作目录内。如果工作目录本身包含 `.git/hooks/` 目录，攻击者能否通过修改 git hooks 在下次 `git commit` 时逃逸沙箱？
+1. `decide_sandbox` 为什么把 `HostOs` 与后端探测做成参数而不是在函数内读环境？如果 probe 是真实全局的，哪个质量属性先坏掉？
+2. `RefusingSandbox` 的 `wrap_command` 仍然构造一条真的 shell 命令（echo 拒绝文本并 exit 1），而不是返回错误。保持 `Sandbox` trait 签名不可失败带来了什么好处？exec 形态工具经 `refusal()` 短路又解决了这个设计的哪个剩余问题？
+3. `NetworkGrant::Hosts` 刻意不让 shell 获得原始出网，许可全部经 web 工具的允许表实现。如果 v2 要支持「git 只能 clone 允许表内的主机」，需要什么基础设施？
+4. `validate` 把「`Hosts` 空允许表」列为错误而不是等价于 `None`。从操作者心理模型出发论证或反驳这个选择。
+5. bwrap 后端在 #1976 围栏下把 workspace 对 shell 降为只读（授予路径仅文件工具可写）。一个只能用 shell 工具完成任务的 worker 在围栏下会遇到什么？这个降级是设计缺陷还是合理取舍？
 
-2. **DNS 重绑定**：octos 的 SSRF 防护在请求前解析 DNS 并检查 IP。一种更高级的攻击是让 DNS 返回两个 IP（一个安全的外部 IP 通过检查，一个内部 IP 用于实际连接）。这种攻击在 octos 的实现中是否可行？
+## 版本演化说明
 
-3. **Prompt 注入的根本解决方案**：正则表达式检测本质上是在与攻击者玩猫鼠游戏。你认为 prompt 注入有根本性的解决方案吗？如果有，是什么？如果没有，最好的缓解策略是什么？
-
-4. **凭据脱敏的过度与不足**：当前的规则既可能误判（把正常的 64+ 字符 hex 串当作敏感数据），也可能漏判（不在 7 类已知凭据模式中的自定义 token）。你会如何在精确性和覆盖率之间取得平衡？
-
----
-
-> **版本演化说明**
-> 本章按当前 `octos` 主分支源码更新。后续阅读时，优先核对 `../octos/crates/octos-agent/src/sandbox/`、`../octos/crates/octos-agent/src/tools/ssrf.rs`、`../octos/crates/octos-agent/src/prompt_guard.rs`、`../octos/crates/octos-agent/src/sanitize.rs`、`../octos/crates/octos-agent/src/policy.rs`、`../octos/crates/octos-agent/src/tools/shell.rs`，以及 `octos-plugin`/`octos-swarm` 中复用 `BLOCKED_ENV_VARS` 和 SafePolicy 语义的子进程入口。
+本章分析基线为 octos main @ `9c157101`（2026-09-02 提交）。主线变化：`eb7c7221`（2026-08-31，PR #2196，14 个文件）引入显式模式 fail-closed 与 Auto 降级告警，并把沙箱决策重构为纯函数 `decide_sandbox`；`ffcde205`（2026-08-26，4 个文件）将 cargo 授权默认收紧为 lock-only、下载经 `allow_network` 门控；issue #1976 引入 `WorkerGrant` 按路径写围栏与 `create_only`。行号与文件行数均以此基准实测，事实来源为 `assets/ch07-facts.md` 事实表。
