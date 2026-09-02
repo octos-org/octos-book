@@ -1,5 +1,5 @@
 spec: task
-name: "Ch10. octos-bus：消息总线、频道抽象与会话持久化"
+name: "Ch11. octos-bus：消息总线、频道抽象与会话持久化(v2 勘误,原 Ch10)"
 inherits: project
 tags: [part3, bus, channel, session, coalescing]
 depends: [ch05-agent-loop]
@@ -23,6 +23,12 @@ contract 接入消息总线，本章需要补足这些生产化语义，而不�
 - 频道示例: `telegram_channel.rs`, `discord_channel.rs`（选 2 个代表性频道深入）
 - 图表: Channel trait 类继承图、Coalescing 5 级切割流程图、Session 生命周期、thread-bound streaming 流程图、durable commit observer 流程图
 - 工程决策侧栏: 为什么 JSONL 而非 SQLite
+
+- 事实边界(2026-09-02 main): 频道文件 17 个(`ls crates/octos-bus/src/*_channel.rs | wc -l`),旧稿「14 频道」作废;新增 dingtalk / line / wechat / wecom_bot / matrix_user 各一行定位
+- 接线点勘误: `crates/octos-cli/src/api/ui_protocol.rs` 已拆为 `ui_protocol_{transport,ledger,progress,task_output,reasoning_effort,alpha2_bridge,alpha9_bridge}.rs` 家族,引用改指具体文件
+- 重编号: 本章由 Ch10 改为 Ch11(Ch10 让给 Harness);章节文件 `chapters/ch10-message-bus.md` 改名 `chapters/ch11-message-bus.md`,镜像 `book/src/part3/ch10.md` 改名 `book/src/part3/ch11.md`,`book/src/SUMMARY.md` 同步;正文内「第 N 章」交叉引用按 OUTLINE.md v2 表重标
+- 勘误方式: 保留章节结构,只改失实处与补新频道一览;所有 `crates/octos-bus/src/*.rs:行号` 与 `crates/octos-cli/src/api/*.rs:行号` 引用逐条重标
+- 分析基线: octos main @ 9c157101
 
 ## 边界
 
@@ -97,3 +103,27 @@ contract 接入消息总线，本章需要补足这些生产化语义，而不�
   当 阅读工程决策侧栏
   那么 对比了 JSONL vs SQLite vs 单 JSON 文件在追加写入、崩溃恢复、并发上的差异
   并且 解释了 JSONL 在 Session 场景下的优势
+
+场景: 频道数与一览表准确
+  测试: review_ch11_channel_count
+  当 阅读频道一览小节
+  那么 频道数为 17 并附统计命令
+  并且 17 个频道文件各有一行定位
+
+场景: ui_protocol 拆分后引用有效
+  测试: review_ch11_ui_protocol_refs
+  当 提取正文全部 `crates/octos-cli/src/api/ui_protocol*.rs` 引用
+  那么 每个都指向拆分后的具体文件且路径存在
+
+场景: 重编号完成
+  测试: review_ch11_renumber
+  当 检查文件名与 SUMMARY.md
+  那么 章节文件为 `chapters/ch11-message-bus.md`、镜像为 `book/src/part3/ch11.md`
+  并且 SUMMARY.md 第三部分第一条指向 `./part3/ch11.md` 且标题为第 11 章
+
+场景: 引用零失效
+  测试: review_ch11_refs_valid
+  当 提取正文全部 `crates/...rs:行号` 引用并对照当前源码
+  那么 每个路径存在
+  并且 每个行号区间不超过文件总行数
+  并且 区间内确实含所述符号
