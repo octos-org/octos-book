@@ -39,7 +39,7 @@ pub struct ContractSpec {
 
 - **Parallel**：`run_parallel_round`（`crates/octos-swarm/src/dispatcher.rs:428`）用 `JoinSet` 把待重试的契约并发派发，先填满 `max_concurrency` 个槽位，每完成一个立刻补位。聚合按到达顺序。$n$ 份契约、并发度 $c$ 的总派发墙钟时间约等于 $\lceil n/c \rceil$ 乘单次后端往返，后端慢的时候并发度是唯一可调的杠杆。
 - **Sequential**：`run_sequential_round`（`crates/octos-swarm/src/dispatcher.rs:478`）一次跑一个，首个硬失败（`TerminalFailed`）即中止，后续契约保持 `not_run`。适合有依赖顺序但产物不互相消费的批次，例如「先审事实表、再审草稿、最后审引用」这类前序失败即全盘无意义的链。
-- **Pipeline**：`run_pipeline_round`（`crates/octos-swarm/src/dispatcher.rs:518`）把契约 i 的产物折叠进契约 i+1 的 `pipeline_input` 字段；前驱不是 `Completed` 就不派发后继。折叠的具体形状是：后继契约的 task 被包成 `{"original_task": …, "pipeline_input": 前驱输出}` 的对象，前驱输出以字符串形态注入，远端 agent 按约定字段解读。
+- **Pipeline**：`run_pipeline_round`（`crates/octos-swarm/src/dispatcher.rs:518`）把契约 i 的产物折叠进契约 i+1 的 `pipeline_input` 字段；前驱不是 `Completed` 就不派发后继。折叠的具体形状分两支（`crates/octos-swarm/src/dispatcher.rs:549-558`）：契约本身是 object task 时直接注入 `pipeline_input` 键；否则把 task 包成 `{"original_task": …, "pipeline_input": 前驱输出}` 的对象，前驱输出以字符串形态注入，远端 agent 按约定字段解读。
 
 ```mermaid
 flowchart LR
@@ -143,7 +143,7 @@ pub fn from_dispatch(outcome: DispatchOutcome) -> Self {
 
 手工模式里「sub-agent 拿到任务就跑」；原语化的第一个要求是把「能不能跑」变成显式判定。Swarm 的门禁有三道，位置不同、对象不同、失败处置也不同。
 
-第一道在派发之前，判定对象是「这次派发本身」。粘合层 `enforce_or_outcome`（`crates/octos-swarm/src/gate.rs:25`）调用 octos-agent 的共享判定 `enforce_dispatch_gates`（`crates/octos-agent/src/dispatch_policy.rs:292`，后端感知变体 :303），把 `GateDenial` 折叠成 swarm 本地的 `SubtaskOutcome`（`TerminalFailed`，last_dispatch_outcome 记为拒绝原因标签）。crates/octos-swarm/src/gate.rs 的模块文档点明动机：Swarm 的 dispatcher 与 `SpawnTool` 的 agent_mcp 分支走同一套检查，使单一绕过面不存在，这正是审计 #701 与 #714 的修复要求。判定内部按固定顺序跑五项检查：沙箱要求（最便宜，只看配置）、工具策略（同步无 I/O）、env 黑名单、env 白名单（黑名单先于白名单，宽松白名单放不进已知坏键）、审批（最后，可能阻塞等用户）。四类策略（工具策略、审批、env allowlist、sandbox 要求）覆盖了外部后端最现实的四类风险。
+第一道在派发之前，判定对象是「这次派发本身」。粘合层 `enforce_or_outcome`（`crates/octos-swarm/src/gate.rs:25`）调用 octos-agent 的共享判定 `enforce_dispatch_gates`（`crates/octos-agent/src/dispatch_policy.rs:292`，后端感知变体 :303），把 `GateDenial` 折叠成 swarm 本地的 `SubtaskOutcome`（`TerminalFailed`，last_dispatch_outcome 记为拒绝原因标签）。crates/octos-swarm/src/gate.rs 的模块文档点明动机：Swarm 的 dispatcher 与 `SpawnTool` 的 agent_mcp 分支走同一套检查，使单一绕过面不存在，这正是审计 #701 与 #714 的修复要求。判定内部按固定顺序跑五项检查：沙箱要求（最便宜，只看配置）、工具策略（同步无 I/O）、env 黑名单、env 白名单（黑名单先于白名单，宽松白名单放不进已知坏键）、审批（最后，可能阻塞等用户）。五项检查归并为四类策略面（工具策略、审批、env 黑白名单、sandbox 要求），覆盖外部后端最现实的四类风险。
 
 ```mermaid
 flowchart TD
