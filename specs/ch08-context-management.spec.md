@@ -1,5 +1,5 @@
 spec: task
-name: "Ch8. 上下文管理：让 Agent 在有限窗口中高效工作"
+name: "Ch8. 上下文管理：让 Agent 在有限窗口中高效工作(v2 段落重写)"
 inherits: project
 tags: [part2, context, compaction, fidelity, steering]
 depends: [ch05-agent-loop]
@@ -18,7 +18,12 @@ compaction 也是 Agent Loop 的 error recovery 路径，因此本章需要承�
 ## 决策
 
 - 源码文件: `../octos/crates/octos-agent/src/agent/compaction.rs`, `../octos/crates/octos-agent/src/agent/loop_runner.rs`, `../octos/crates/octos-agent/src/compaction.rs`, `../octos/crates/octos-agent/src/compaction_tiered.rs`, `../octos/crates/octos-agent/src/summarizer.rs`, `../octos/crates/octos-agent/src/workspace_contract.rs`, `../octos/crates/octos-agent/src/workspace_git.rs`, `../octos/crates/octos-agent/src/validators.rs`, `../octos/crates/octos-agent/src/prompt_guard.rs`
-- 图表: Compaction 触发流程图、Fidelity 四档对比表、contract-gated tiered compaction 图
+- 事实边界(2026-09-02 main): 压缩面三处 `crates/octos-agent/src/compaction.rs`、`compaction_tiered.rs`(三档压缩面,M8.5 #540,1271 行)、`agent/compaction.rs` 与 `agent/loop_compaction.rs`(消息准备管线);`prompt_context.rs` 需一段定位
+- 新面三处必补: ① `e312e4c1` recall 工具 + 预算感知读取(#2131,`compaction.rs`、`tools/read_file.rs`、`tools/recall.rs`)——改变「80% 阈值一刀切」叙事,压缩后可用 recall 重新物化;② `825d6a52` recall 在压缩后存活(`crates/octos-cli/src/api/context_manager.rs`);③ `f3aa07f0` cache 经济学与压缩的交互(一次性 cache-write 退出),与 Ch3「成本层」互引不重复
+- 分层压缩: `compaction_tiered.rs` 三档面按当前源码写清各档触发条件与保真度
+- 勘误方式: 保留 8.1-8.5 结构,8.1 改写为「阈值 + recall」双机制,新增「分层压缩面」小节;所有引用行号逐条重标
+- 图表: Compaction 触发流程图(含 recall 回路)、三档压缩面对比表、contract-gated tiered compaction 图
+- 分析基线: octos main @ 9c157101;镜像同步 `book/src/part2/ch08.md`
 - 工程决策侧栏: 为什么 80% 而非动态阈值
 - 章节边界: Ch5 只介绍 `CompactAndRetry` 触发点，本章负责解释 compaction policy、summary、validator ledger 和 workspace contract 的完整机制
 
@@ -111,3 +116,21 @@ compaction 也是 Agent Loop 的 error recovery 路径，因此本章需要承�
   当 阅读工程决策侧栏
   那么 对比了固定阈值 vs 动态阈值 vs 预测式的方案
   并且 解释了 80% 固定阈值在简单性与有效性间的平衡
+
+场景: recall 回路写明
+  测试: review_ch08_recall_loop
+  当 阅读压缩策略小节
+  那么 写明压缩替换工具输出后 recall 如何重新物化,以及预算感知读取的触发条件
+  并且 引用 `tools/recall.rs`、`compaction.rs` 实际行号并注明 e312e4c1 / 825d6a52
+
+场景: 三档压缩面准确
+  测试: review_ch08_tiered_surface
+  当 阅读分层压缩小节与对比表
+  那么 三档各自的触发条件与保真度能在 `compaction_tiered.rs` 中找到依据
+
+场景: 引用零失效
+  测试: review_ch08_refs_valid
+  当 提取正文全部 `crates/...rs:行号` 引用并对照当前源码
+  那么 每个路径存在
+  并且 每个行号区间不超过文件总行数
+  并且 区间内确实含所述符号
