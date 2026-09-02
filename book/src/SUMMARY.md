@@ -36,6 +36,12 @@
 
 ---
 
+# 第四部分：双环
+
+- [第 19 章：octoscode：终端客户端与 UI Protocol](./part4/ch19.md)
+
+---
+
 # 附录
 
 - [附录 A：octos 完整 Crate 依赖图](./appendix/a-crate-graph.md)
