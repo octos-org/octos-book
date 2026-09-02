@@ -52,3 +52,4 @@
 - [附录 C：配置参考](./appendix/c-config-reference.md)
 - [附录 D：Feature Flags 一览](./appendix/d-feature-flags.md)
 - [附录 E：从源码构建与贡献指南](./appendix/e-contributing.md)
+- [附录 F:OLP v2 协议速查](appendix/f-olp-cheatsheet.md)
