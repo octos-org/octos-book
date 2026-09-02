@@ -112,7 +112,7 @@ CLI 的分发结构很短。总入口 `maybe_run`(`herdr/src/cli.rs:95`)按第�
 
 **发现**:`herdr agent list`,实现是 `agent_list`(`herdr/src/cli/agent.rs:438`,usage 行 `:440`),发 `Method::AgentList`(`herdr/src/api/schema.rs:107`)。返回每个窗格的 agent 标签、窗格号与状态。外环上岗第一件事就是跑它,把「哪个窗格是我的内环」这个问题变成一行输出。
 
-**注入**:`herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]`,实现是 `agent_prompt`(`herdr/src/cli/agent.rs:771`,usage 行 `:774`)。`--until` 与 `--timeout` 必须配 `--wait` 使用(`:825`、`:828` 各有一道检查),请求经 `Method::AgentPrompt`(`herdr/src/api/schema.rs:127`)进 server,参数类型 `AgentPromptParams` 只有三个字段:target、text、可选的 wait 选项(`herdr/src/api/schema/agents.rs:176`,字段在 `:178` 至 `:180`)。
+**注入**:`herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]`,实现是 `agent_prompt`(`herdr/src/cli/agent.rs:771`,usage 行 `:774`)。`--until` 与 `--timeout` 必须配 `--wait` 使用(`:825`、`:828` 各有一道检查),请求经 `Method::AgentPrompt`(`herdr/src/api/schema.rs:127`)进 server,参数类型 `AgentPromptParams` 只有三个字段:target、text、可选的 wait 选项(`herdr/src/api/schema/agents.rs:176`,字段在 `:177` 至 `:180`)。
 
 **观测**:`herdr pane read <pane_id> [--source visible|recent|recent-unwrapped|detection] [--lines N] ...`,实现是 `pane_read`(`herdr/src/cli/pane.rs:455`,USAGE 常量 `:473`),走 `Method::PaneRead`(`herdr/src/api/schema.rs:175`)。`--source detection` 直接返回 detect 引擎的裁决,是排查识别失灵的第一现场。
 
