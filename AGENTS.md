@@ -52,3 +52,17 @@ Do not stop just to ask about:
 6. **去味润色**:独立的最后一遍,按 `trilingual-collab-zh.md` 执行:全角标点、盘古之白、破折号全篇 ≤2、
    加粗 ≤10、无清嗓子开场、无自问自答、无金句/总结复述结尾、无互联网黑话、无翻译腔、无弱化词堆叠。
 7. **交付声明**:ACK 或 result.md 里写明验证级别(verified / partially-verified / unverified)与三视角 review 的问题计数。
+
+## 车道分工(glm-5.3 vs glm-5.3-flash,peer_handoff 的 model 键)
+
+按模型特点分:**flash 做「读多写少、可机械核对」的活,5.3 做「需要判断与成文」的活**。每章派单默认四个 peer,勘误章可省略 C2:
+
+| peer | lane | 职责 | 硬规则 |
+|---|---|---|---|
+| A `chNN-facts` / `chNN-refcheck` | `cheap`(flash) | 事实表:文件行数、首行文档、符号行号、`fn name()`、Cargo 依赖边;勘误章:旧引用逐条核对,产出「旧行号→新行号」补丁清单并**直接 apply 行号替换**(只改数字,不改文字) | 一切计数与行号必须来自命令输出并附命令;不得估算 |
+| B `chNN-writer` / `chNN-editor` | `strong`(5.3) | 整章重写、段落改写、新增小节、Mermaid 图、工程决策侧栏、去味润色的实际改稿 | 数字与行号只准取自 A 的事实表/补丁;动笔前读 `.octos/skills/` 两份规范 |
+| C1 `chNN-factcheck` | `cheap`(flash) | fact-checker + structure 机械项:引用路径/行号/符号命中、旧数字、锚点、mermaid 数、「——」/加粗/黑话计数、镜像 cmp、SUMMARY 条目 | 只报告不改稿;每个计数附命令与输出,禁止目测 |
+| C2 `chNN-techreview` | `strong`(5.3) | tech-reviewer + structure 判断项:机制描述是否正确、技术公平性、论证层数是否够、跨章重复、章节结构 | 只报告不改稿;每条 critical 必须附源码行号证据 |
+| master | primary(5.3) | 派单、收割、裁决(含 wontdo 与事实矛盾)、验收、commit、ACK | 验收机械项复跑命令,不采信 peer 的口头计数 |
+
+附录 A/B/D 的表格生成、`book/src/SUMMARY.md` 改名与条目、镜像同步这类纯搬运也走 `cheap`。
