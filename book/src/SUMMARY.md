@@ -20,6 +20,7 @@
 - [第 7 章：安全纵深：从沙箱到 Prompt 注入防御](./part2/ch07.md)
 - [第 8 章：上下文管理：让 Agent 在有限窗口中高效工作](./part2/ch08.md)
 - [第 9 章：扩展机制：Skills 与 Plugins 双轨制](./part2/ch09.md)
+- [第 10 章：Harness：校验器、事件 ABI 与 Schema 版本化](./part2/ch10.md)
 
 ---
 
