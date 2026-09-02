@@ -1,6 +1,6 @@
 # 第 18 章:Goal 与 Peer:把目标从上下文里搬出来
 
-> **定位**:本章分析 v2 新增的 goal 与 peer 两条线:goal 线 9 个文件约 47,645 行(`crates/octos-cli/src/goal_tool.rs` 3,028、`crates/octos-fleet/src/sqlite_ledger.rs` 6,360 等),peer 线 9 个文件约 5,965 行(`crates/octos-cli/src/peers/mod.rs` 3,186 等),合计超过五万行新代码。它们回答同一个问题:长程目标放在模型的对话上下文里会腐烂,放在哪里才安全。前置依赖:第 5 章(§5.10 续跑边界)、第 12 章(supervisor 与租约)、第 16 章(Fleet 内核与 GoalLedger 所属 crate)。适用场景:要构建多 agent 长任务系统的开发者,以及关心「目标如何跨会话存活」的架构读者。本章也是第四部分外环(第 20 章)的前置:外环靠这些原语观测与驱动。
+> **定位**:本章分析 v2 新增的 goal 与 peer 两条线:goal 线 9 个文件合计 52,445 行(`crates/octos-cli/src/goal_tool.rs` 3,028、`crates/octos-fleet/src/sqlite_ledger.rs` 6,360 等),peer 线 9 个文件合计 5,969 行(`crates/octos-cli/src/peers/mod.rs` 3,186 等),合计近六万行新代码。它们回答同一个问题:长程目标放在模型的对话上下文里会腐烂,放在哪里才安全。前置依赖:第 5 章(§5.10 续跑边界)、第 12 章(supervisor 与租约)、第 16 章(Fleet 内核与 GoalLedger 所属 crate)。适用场景:要构建多 agent 长任务系统的开发者,以及关心「目标如何跨会话存活」的架构读者。本章也是第四部分外环(第 20 章)的前置:外环靠这些原语观测与驱动。
 
 ## 18.1 为什么把目标从上下文里搬出来
 
@@ -8,14 +8,14 @@ Claude Code 式的 goal 实现把目标文本每个 turn 注入上下文,依赖�
 
 octos 的做法是把 goal 从微观上下文中取出来,交给服务端的 keeper 在宏观层持有和推进:keeper 定期用 `GoalContinue` 续跑 tick 派活、收账、决定下一步;派出去的 peer 在自己的微观上下文里只看到一份自包含的任务契约(brief),里面没有 goal 文本。goal 的持续性由结构保证,单个 peer 停了不影响 goal 前进。
 
-这条设计线落在两个系统的分工上。goal 线持有与推进目标:`crates/octos-cli/src/goal_tool.rs`(3,028 行,首行文档注明它取代脆弱的提示词方案 #1696)、`commands/{goal,ledger}.rs`(1,116 + 240 行)、`autonomy/{goal_loop_runtime,master_continuation_scheduler,supervisor_store,fleet_wake}.rs`(1,562 + 1,416 + 3,277 + 1,807 行)、`crates/octos-fleet/src/sqlite_ledger.rs`(6,360 行)。peer 线执行:`crates/octos-cli/src/peers/mod.rs`(3,186 行)、`crates/octos-cli/src/peers/host.rs`(502 行)、`crates/octos-cli/src/commands/peer.rs`(211 行)与 `octos-agent` 里六个 peer 工具文件(合计 2,070 行)。goal 线 9 文件约 47,645 行,peer 线 9 文件约 5,965 行,体量差八倍:持有目标的机器比执行目标的机器复杂得多。账本一个文件就 6,360 行,因为目标的每次状态转移、每条发现、每个升级请求、每条决策都要留审计痕迹;而 peer 的全部协议只是目录下的十来个小文件。
+这条设计线落在两个系统的分工上。goal 线持有与推进目标:`crates/octos-cli/src/goal_tool.rs`(3,028 行,首行文档注明它取代脆弱的提示词方案 #1696)、`commands/{goal,ledger}.rs`(1,116 + 240 行)、`autonomy/{goal_loop_runtime,master_continuation_scheduler,supervisor_store,fleet_wake}.rs`(1,562 + 1,416 + 3,277 + 1,807 行)、`crates/octos-fleet/src/sqlite_ledger.rs`(6,360 行)。peer 线执行:`crates/octos-cli/src/peers/mod.rs`(3,186 行)、`crates/octos-cli/src/peers/host.rs`(502 行)、`crates/octos-cli/src/commands/peer.rs`(211 行)与 `octos-agent` 里六个 peer 工具文件(合计 2,070 行)。goal 线 9 文件合计 52,445 行,peer 线 9 文件合计 5,969 行,体量差约九倍:持有目标的机器比执行目标的机器复杂得多。账本一个文件就 6,360 行,因为目标的每次状态转移、每条发现、每个升级请求、每条决策都要留审计痕迹;而 peer 的全部协议只是目录下的十来个小文件。
 
 分层还有一个容易误判的细节:goal 的持有方不是某个独立守护进程,而是 `crates/octos-cli/src/autonomy/agent_orchestrator.rs`(33,639 行)里的 keeper 角色,`continuations` 字段(`:11783`)持有调度器,goal 的续跑、fleet 派发、账本归集都发生在 master 会话的编排器里。所谓「服务端持有」的准确含义是:持有者不是模型的对话上下文,而是编排器进程里的持久状态加磁盘上的两本账。这也是外环(第 20 章)能观测它的原因:状态在服务端,就有稳定的查询面。
 
 | 线 | 文件数 | 行数 | 核心文件 |
 |---|---|---|---|
-| goal 线 | 9 | ≈47,645 | `crates/octos-fleet/src/sqlite_ledger.rs` 6,360、`crates/octos-cli/src/goal_tool.rs` 3,028、`crates/octos-cli/src/autonomy/supervisor_store.rs` 3,277 |
-| peer 线 | 9 | ≈5,965 | `crates/octos-cli/src/peers/mod.rs` 3,186、六 peer 工具 2,070 |
+| goal 线 | 9 | 52,445 | `crates/octos-fleet/src/sqlite_ledger.rs` 6,360、`crates/octos-cli/src/goal_tool.rs` 3,028、`crates/octos-cli/src/autonomy/supervisor_store.rs` 3,277 |
+| peer 线 | 9 | 5,969 | `crates/octos-cli/src/peers/mod.rs` 3,186、六 peer 工具 2,070 |
 
 与第 16 章的分工:fleet 内核(redb)管理计划与 attempt 的执行状态,`GoalLedger`(SQLite)管理目标、发现与升级的审计账本,两本账互不替代(第 16 章 §16.7 已划界)。与第 12 章的分工:supervisor 管会话内的子任务存活,peer 是跨会话的进程级实体。
 
@@ -72,7 +72,7 @@ verifier 车道是在接线处注入的:`crates/octos-cli/src/runtime/profile.rs
 
 supervisor 侧的支撑是 `crates/octos-cli/src/autonomy/supervisor_store.rs`(3,277 行):`SupervisorStore`(`:697`)持久化受监管 agent 组的状态,`load_state`(`:780`)在重启时把状态读回。第 12 章讲过它与租约的分工,这里只需要记住 goal 的续跑请求走的是同一条持久化路径,fleet_wake 的文档明说它的 commit 回调复用 peer 与 goal 唤醒共用的持久化管线。
 
-把这一节的状态拼起来,goal 的状态机在两个层面运转。账本层面:`cas_goal_status` 与 `update_goal_status`(`:1498`)管理 active、paused、completed、blocked、budget_limited、archived 这些字符串状态,转移规则分操作员可达与模型可达两类——`crates/octos-cli/src/commands/goal.rs` 的注释写明 complete 与 blocked 只有模型可到,archived 只有操作员可到,reopen 只认 blocked、paused、budget_limited 三种入口。运行时层面:`GoalRuntimeState` 的四态(Active、Paused、Completed、Failed)是内存里的推进视图,`GoalRuntimePolicy` 的两个构造函数给出两种节奏:`fixed_interval` 按固定间隔心跳,`self_paced` 由信号驱动,两者都受 `max_continuations` 封顶。两层的状态由 keeper 对齐:每次 `GoalContinue` tick 读账本、比预算、决定入队下一个 tick 还是转 wrap-up。goal 侧入队测试(`:1185`)还验证了去重键携带 goal_id,同一会话两个不同的 goal 不会在队列里互相挤掉。
+把这一节的状态拼起来,goal 的状态机在两个层面运转。账本层面:`cas_goal_status` 与 `update_goal_status`(`:1498`)管理 active、complete、blocked、budget_limited、paused、cleared 这些字符串状态(`crates/octos-fleet/src/sqlite_ledger.rs:39` 注释状态集,终态保护为 complete 与 cleared 两种,`:914`/`:1512` 的 WHERE 子句可证);`archived` 不在账本状态集里,它是 supervisor 事件流侧的终态标记(`crates/octos-cli/src/commands/goal.rs:12-14` 注释明写 goal state 的权威源在 supervisor 事件流而非 SQLite goals 表),两本账的状态集不应混写,转移规则分操作员可达与模型可达两类——`crates/octos-cli/src/commands/goal.rs` 的注释写明 complete 与 blocked 只有模型可到,archived 只有操作员可到,reopen 只认 blocked、paused、budget_limited 三种入口。运行时层面:`GoalRuntimeState` 的四态(Active、Paused、Completed、Failed)是内存里的推进视图,`GoalRuntimePolicy` 的两个构造函数给出两种节奏:`fixed_interval` 按固定间隔心跳,`self_paced` 由信号驱动,两者都受 `max_continuations` 封顶。两层的状态由 keeper 对齐:每次 `GoalContinue` tick 读账本、比预算、决定入队下一个 tick 还是转 wrap-up。goal 侧入队测试(`:1185`)还验证了去重键携带 goal_id,同一会话两个不同的 goal 不会在队列里互相挤掉。
 
 ## 18.5 Peer 生命周期:六个阶段
 
