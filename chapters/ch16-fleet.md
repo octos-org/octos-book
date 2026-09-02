@@ -23,17 +23,17 @@
 
 ## 16.2 记录模型:一切先落盘
 
-内核的世界由六张 redb 表构成,全部定义在 `crates/octos-fleet/src/store.rs:48-53`:`fleets`(fleet 行)、`fleet_children`(子任务行)、`attempts`(尝试行)、`plans`(持久计划)、`decision_log`(追加式决策日志)、`outbox`(事件发件箱)。键都是字符串,值是 JSON。记录类型集中在 `records.rs`(808 行),关键锚点如下:
+内核的世界由六张 redb 表构成,全部定义在 `crates/octos-fleet/src/store.rs:48-53`:`fleets`(fleet 行)、`fleet_children`(子任务行)、`attempts`(尝试行)、`plans`(持久计划)、`decision_log`(追加式决策日志)、`outbox`(事件发件箱)。键都是字符串,值是 JSON。记录类型集中在 `crates/octos-fleet/src/records.rs`(808 行),关键锚点如下:
 
 | 符号 | 行号 | 内容 |
 |---|---|---|
-| `SCHEMA_VERSION = 3` | records.rs:33 | 每行携带的版本号 |
-| `FleetBudget` | records.rs:119 | `token_budget` / `tokens_reserved` / `tokens_committed` / `hard` |
-| `FleetRecord` | records.rs:145 | fleet 行,含 `generation` 围栏与 keeper 唤醒元数据(:152) |
-| `Lease` | records.rs:250 | `owner_epoch` + `expires_at_ms` |
-| `Attempt` | records.rs:256 | 尝试行,含 `generation` 与 `lease` |
-| `DurablePlan` | records.rs:313 | 计划,内含 `PlanTask`:333、`AcceptanceCriterion`:356、`Verifier`:367、`EvidenceRef`:378 |
-| `OutboxEvent` | records.rs:524 | 持久事件,`FleetEventKind`:545 |
+| `SCHEMA_VERSION = 3` | crates/octos-fleet/src/records.rs:33 | 每行携带的版本号 |
+| `FleetBudget` | crates/octos-fleet/src/records.rs:119 | `token_budget` / `tokens_reserved` / `tokens_committed` / `hard` |
+| `FleetRecord` | crates/octos-fleet/src/records.rs:145 | fleet 行,含 `generation` 围栏与 keeper 唤醒元数据(:152) |
+| `Lease` | crates/octos-fleet/src/records.rs:250 | `owner_epoch` + `expires_at_ms` |
+| `Attempt` | crates/octos-fleet/src/records.rs:256 | 尝试行,含 `generation` 与 `lease` |
+| `DurablePlan` | crates/octos-fleet/src/records.rs:313 | 计划,内含 `PlanTask`:333、`AcceptanceCriterion`:356、`Verifier`:367、`EvidenceRef`:378 |
+| `OutboxEvent` | crates/octos-fleet/src/records.rs:524 | 持久事件,`FleetEventKind`:545 |
 
 计划任务是全模型的重点。`PlanTask` 不只有标题与依赖,还带 `acceptance` 验收条件列表与逐任务的 `grant`(worker 级能力授予,`#[serde(default)]` 使旧行缺省为最小授权)。验收条件由 `Verifier` 定义,目前四种:`Manual`、`FileExists`、`CommandExit`、`ValidatorRef`。完成的定义是数据加校验器,不是布尔值。`EvidenceRef` 把证据内容寻址(`sha256`),验收断言与实际观察到的内容无法漂移。
 
@@ -79,21 +79,21 @@ classDiagram
 
 **图 16-1:记录模型。** 计划描述意图,child 与 attempt 记录执行,budget 与 generation 挂在 fleet 行上,outbox 承担对外通知。
 
-版本迁移的策略值得单说。每行持久化数据都带 `schema_version`,加载时只丢弃版本更高的行(records.rs:571 的高版本守卫),旧二进制遇到新行是「不认识就丢」,永远不会错解析。`SCHEMA_VERSION` 从 2 升到 3 的原因写在 records.rs:25 的注释里:PR B 给 `ChildStatus` 增加了 `Blocked` 变体。加字段可以用 `#[serde(default)]` 向前兼容,不算升级;加枚举变体是破坏性变更,旧二进制解码 `"Blocked"` 会报未知变体错误而不是优雅跳过,所以必须升版本号,让旧二进制把这样的行按高版本丢弃。
+版本迁移的策略值得单说。每行持久化数据都带 `schema_version`,加载时只丢弃版本更高的行(crates/octos-fleet/src/records.rs:571 的高版本守卫),旧二进制遇到新行是「不认识就丢」,永远不会错解析。`SCHEMA_VERSION` 从 2 升到 3 的原因写在 crates/octos-fleet/src/records.rs:25 的注释里:PR B 给 `ChildStatus` 增加了 `Blocked` 变体。加字段可以用 `#[serde(default)]` 向前兼容,不算升级;加枚举变体是破坏性变更,旧二进制解码 `"Blocked"` 会报未知变体错误而不是优雅跳过,所以必须升版本号,让旧二进制把这样的行按高版本丢弃。
 
-这个判据值得展开,因为它是所有持久化 schema 的通用问题。字段新增是「行变宽」:旧代码读不到新键,serde 用默认值补上,数据仍在,只是新功能不可见。枚举变体新增是「值域变宽」:旧代码的 match 没有那个分支,反序列化直接失败,而且失败发生在整行解码时,一行坏会拖垮一次扫描。octos 的选择是把失败的粒度收进行级:版本守卫在完整解码前只探测 `schema_version`(records.rs 的 VersionProbe 结构),高版本行按 `Ok(None)` 丢弃,扫描继续。代价是丢数据,但丢的是「新二进制才理解的行」,旧二进制本来也无法正确处理它们,丢弃与失明等价,好过失明装作看见。
+这个判据值得展开,因为它是所有持久化 schema 的通用问题。字段新增是「行变宽」:旧代码读不到新键,serde 用默认值补上,数据仍在,只是新功能不可见。枚举变体新增是「值域变宽」:旧代码的 match 没有那个分支,反序列化直接失败,而且失败发生在整行解码时,一行坏会拖垮一次扫描。octos 的选择是把失败的粒度收进行级:版本守卫在完整解码前只探测 `schema_version`(crates/octos-fleet/src/records.rs 的 VersionProbe 结构),高版本行按 `Ok(None)` 丢弃,扫描继续。代价是丢数据,但丢的是「新二进制才理解的行」,旧二进制本来也无法正确处理它们,丢弃与失明等价,好过失明装作看见。
 
 ## 16.3 事务与 outbox:一次转移一个写事务
 
-`FleetKernelStore`(store.rs:195)是事务原语层。模块文档(store.rs:6-8)给出每个方法的固定形状:一个 `begin_write` 内完成读当前行、检查 CAS 谓词、写下一态,预算结算与 outbox 追加也在同一个事务里,不存在跨存储的窗口。CAS 分区从 store.rs:880 的注释块开始,三个核心转移:
+`FleetKernelStore`(crates/octos-fleet/src/store.rs:195)是事务原语层。模块文档(crates/octos-fleet/src/store.rs:6-8)给出每个方法的固定形状:一个 `begin_write` 内完成读当前行、检查 CAS 谓词、写下一态,预算结算与 outbox 追加也在同一个事务里,不存在跨存储的窗口。CAS 分区从 crates/octos-fleet/src/store.rs:880 的注释块开始,三个核心转移:
 
-`launch_child`(store.rs:889)启动一个 Ready 子任务。谓词有四道:child 必须 Ready、无在飞 attempt、fleet 非终态(#1973 修复轮加入的终态围栏)、预算放行。全部通过后,一个事务写入 child 的 `Launching`、新的 `Leased` attempt(`AttemptStatus::Leased` 在 store.rs:997,`Lease{owner_epoch}` 在 :998)、预算预留与一条 `ChildLaunching` outbox 事件。任何拒绝都不留半状态:预算拒绝的 child 仍是 Ready,不会被晾在 Launching。
+`launch_child`(crates/octos-fleet/src/store.rs:889)启动一个 Ready 子任务。谓词有四道:child 必须 Ready、无在飞 attempt、fleet 非终态(#1973 修复轮加入的终态围栏)、预算放行。全部通过后,一个事务写入 child 的 `Launching`、新的 `Leased` attempt(`AttemptStatus::Leased` 在 crates/octos-fleet/src/store.rs:997,`Lease{owner_epoch}` 在 :998)、预算预留与一条 `ChildLaunching` outbox 事件。任何拒绝都不留半状态:预算拒绝的 child 仍是 Ready,不会被晾在 Launching。
 
-`mark_running`(store.rs:1053)把 Leased 推到 Running,四段谓词含 `attempt.generation == fleet.generation`(store.rs:1122)。`complete_child`(store.rs:1157)要求 child 处于 Running、generation 相等(:1236)、`lease.owner_epoch` 匹配(:1237),成功才写结果并结算预算。generation 是 fleet 行上的成员纪元,replan 时递增;旧世代的迟到事件被围栏拦下。
+`mark_running`(crates/octos-fleet/src/store.rs:1053)把 Leased 推到 Running,四段谓词含 `attempt.generation == fleet.generation`(crates/octos-fleet/src/store.rs:1122)。`complete_child`(crates/octos-fleet/src/store.rs:1157)要求 child 处于 Running、generation 相等(:1236)、`lease.owner_epoch` 匹配(:1237),成功才写结果并结算预算。generation 是 fleet 行上的成员纪元,replan 时递增;旧世代的迟到事件被围栏拦下。
 
-CAS 拒绝被建模为值,不是错误。`LaunchOutcome` / `CompleteOutcome` / `MarkRunningOutcome` 的 `Superseded` 变体(store.rs:59、75、102)是普通控制流,调用方据此推理;`Err` 只留给真实的基础设施故障。这个区分在 worker 侧有直接后果,16.6 会看到。
+CAS 拒绝被建模为值,不是错误。`LaunchOutcome` / `CompleteOutcome` / `MarkRunningOutcome` 的 `Superseded` 变体(crates/octos-fleet/src/store.rs:59、75、102)是普通控制流,调用方据此推理;`Err` 只留给真实的基础设施故障。这个区分在 worker 侧有直接后果,16.6 会看到。
 
-预算在事务内结算,`FleetBudget::admits`(records.rs:132)用 checked 加法求和再比较:
+预算在事务内结算,`FleetBudget::admits`(crates/octos-fleet/src/records.rs:132)用 checked 加法求和再比较:
 
 ```rust
 pub fn admits(&self, projected: u64) -> bool {
@@ -110,7 +110,7 @@ pub fn admits(&self, projected: u64) -> bool {
 
 溢出的和不可能是合法预算,直接拒绝;饱和算术会把 `MAX + MAX + 1 <= MAX` 静默判为放行(P2-5 修复)。v1 的 `hard = false` 是软准入:拒绝的是下一次启动,不打断在飞运行。
 
-outbox 解决「状态变了要通知谁」。`append_event`(store.rs:2518)在各转移自己的写事务内追加(store.rs:2806 注释),事件类型四种:`ChildLaunching`、`ChildRunning`、`ChildDone`、`FleetDrained`。消费协议是真实的 claim/ack:`claim_next`(store.rs:2547)领取最低序号未确认事件,盖 `claimed_by`、新铸 `claim_token`、设 `claim_expires_at`;`ack`(store.rs:2603)必须出示匹配的 `(claimed_by, claim_token)`,不匹配返回 `StaleClaim`。这个令牌围栏(P1-3)挡住一种具体竞态:消费者的租约已过期、事件已被别人重领,旧消费者迟到的 ack 不会污染新消费者的进度。这套唤醒骑的是第 12 章的 MasterContinuationScheduler,调度细节详见第 12 章,keeper 语义详见第 18 章。
+outbox 解决「状态变了要通知谁」。`append_event`(crates/octos-fleet/src/store.rs:2518)在各转移自己的写事务内追加(crates/octos-fleet/src/store.rs:2806 注释),事件类型四种:`ChildLaunching`、`ChildRunning`、`ChildDone`、`FleetDrained`。消费协议是真实的 claim/ack:`claim_next`(crates/octos-fleet/src/store.rs:2547)领取最低序号未确认事件,盖 `claimed_by`、新铸 `claim_token`、设 `claim_expires_at`;`ack`(crates/octos-fleet/src/store.rs:2603)必须出示匹配的 `(claimed_by, claim_token)`,不匹配返回 `StaleClaim`。这个令牌围栏(P1-3)挡住一种具体竞态:消费者的租约已过期、事件已被别人重领,旧消费者迟到的 ack 不会污染新消费者的进度。这套唤醒骑的是第 12 章的 MasterContinuationScheduler,调度细节详见第 12 章,keeper 语义详见第 18 章。
 
 消费侧值得单独走一遍,因为它把 outbox 的持久语义补成了完整一环。`crates/octos-cli/src/autonomy/fleet_wake.rs`(1,807 行)的 `drain_fleet_outbox_once`(:235)是可测试的核心:吃 store、时钟、批量上限与一个 `commit_wake` 回调,循环 `claim_next` 直到领空或达批量。ack 的门槛是一个两值枚举 `WakeCommit`(:70):唤醒持久化为 `Durable`,可以 ack;只在内存里或持久化失败为 `NotDurable`,不 ack,事件留在 claimed 状态,租约(30 秒,:56)到期自动重投。唤醒永不静默丢失,代价是最多重投一次。消费循环 `spawn_fleet_outbox_consumer`(:343)每 3 秒一 tick,单 tick 上限 64 条(:63),防止积压的 outbox 独占消费者或堆出无限续跑队列,余量留给下一 tick。三个特殊分支各自有编号:#1973 修复轮规定已取消 fleet 的 `ChildDone` 直接 ack 不唤醒(goal 已清,唤醒会用陈旧元数据复活一个死控制器;Complete / Failed 的迟到事件仍唤醒,keeper 借此自检完成);fleet 行消失也直接 ack,不让 outbox 卡在缺失记录上;非终态生命周期事件不含唤醒语义,领了就 ack。唤醒内容不是事件裸转发:`render_fleet_snapshot`(:99)先异步读计划与就绪集,渲染成 `FleetKeeperSnapshot`(:84,objective、每任务一行、就绪 id 列表),同步的提示渲染器只做格式化不再碰 I/O。fleet 侧的结论是:outbox 保证事件必达,消费环保证唤醒必持久,两层各管一段崩溃窗口。
 
@@ -149,11 +149,11 @@ sequenceDiagram
 
 ## 16.4 状态机与恢复协调
 
-三层状态各管一段:fleet 整体是 `FleetStatus`(Active / Draining / Complete / Failed,records.rs:41);子任务是 `ChildStatus`(Planned / Ready / Launching / Running / Blocked / Succeeded / Failed / Cancelled,records.rs:64);尝试是 `AttemptStatus`(Leased / Running / Done / Interrupted,records.rs:94)。`Blocked` 是 PR B 加入的非终态:attempt 让位去请求更宽的授权,等 keeper 决断(16.5)。
+三层状态各管一段:fleet 整体是 `FleetStatus`(Active / Draining / Complete / Failed,crates/octos-fleet/src/records.rs:41);子任务是 `ChildStatus`(Planned / Ready / Launching / Running / Blocked / Succeeded / Failed / Cancelled,crates/octos-fleet/src/records.rs:64);尝试是 `AttemptStatus`(Leased / Running / Done / Interrupted,crates/octos-fleet/src/records.rs:94)。`Blocked` 是 PR B 加入的非终态:attempt 让位去请求更宽的授权,等 keeper 决断(16.5)。
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Planned: add_child(store.rs:503)
+    [*] --> Planned: add_child(crates/octos-fleet/src/store.rs:503)
     Planned --> Ready: 依赖满足(resolve_and_collect_ready:676)
     Ready --> Launching: launch_child CAS(889)
     Launching --> Running: mark_running CAS(1053)
@@ -171,25 +171,25 @@ stateDiagram-v2
     Cancelled --> [*]
 ```
 
-**图 16-3:child 状态机。** 每条边都落在 store.rs 的一个 CAS 方法上;reconcile 的回收边只在租约过期或外来纪元时触发。
+**图 16-3:child 状态机。** 每条边都落在 crates/octos-fleet/src/store.rs 的一个 CAS 方法上;reconcile 的回收边只在租约过期或外来纪元时触发。
 
-恢复协调是 `reconcile`(store.rs:2191,报告类型 `ReconcileReport` 在 :160)。启动时以当前 `owner_epoch` 与时钟扫描所有 Launching / Running 的 child:活 fleet 的 attempt 只在租约失效(外来 `owner_epoch` 或 `expires_at_ms` 已过)时回收;终态 fleet 的在飞 attempt 无条件结算(#1973 修复轮:此前 Cancelled 的 fleet 被整体跳过,attempt 与预算预留被永久钉死)。回收动作是一个事务三件事:attempt 记 `Interrupted`、从 fleet 预算释放该 attempt 的预留(`checked_sub`,下溢即账务不变量破坏,直接报错)、child 清空 `current_attempt_id`。活 fleet 的 child 回到 Ready 等待本次启动重发;终态 fleet 的 child 记 Cancelled,永不复活(P2-7)。旧 attempt 永远不复活,重跑一律开新 attempt。
+恢复协调是 `reconcile`(crates/octos-fleet/src/store.rs:2191,报告类型 `ReconcileReport` 在 :160)。启动时以当前 `owner_epoch` 与时钟扫描所有 Launching / Running 的 child:活 fleet 的 attempt 只在租约失效(外来 `owner_epoch` 或 `expires_at_ms` 已过)时回收;终态 fleet 的在飞 attempt 无条件结算(#1973 修复轮:此前 Cancelled 的 fleet 被整体跳过,attempt 与预算预留被永久钉死)。回收动作是一个事务三件事:attempt 记 `Interrupted`、从 fleet 预算释放该 attempt 的预留(`checked_sub`,下溢即账务不变量破坏,直接报错)、child 清空 `current_attempt_id`。活 fleet 的 child 回到 Ready 等待本次启动重发;终态 fleet 的 child 记 Cancelled,永不复活(P2-7)。旧 attempt 永远不复活,重跑一律开新 attempt。
 
-计划修订走 revision CAS:`replan`(store.rs:1512)带 `expected_revision`,递增 revision 并把任务的声明依赖同步到 child 行的反规范化副本;`retitle_task`(:1804)与 `set_task_grant`(:1898)同型。决策日志(`append_decision`:2648、`list_decisions`:2697)按序号追加,`DecisionKind` 是内核发出的封闭集合,与 `Finding` 的开放 `kind` 字符串(records.rs:447,一条可证伪的声明,component 字段做聚类键)形成对照:内核决策封闭,探索发现开放。
+计划修订走 revision CAS:`replan`(crates/octos-fleet/src/store.rs:1512)带 `expected_revision`,递增 revision 并把任务的声明依赖同步到 child 行的反规范化副本;`retitle_task`(:1804)与 `set_task_grant`(:1898)同型。决策日志(`append_decision`:2648、`list_decisions`:2697)按序号追加,`DecisionKind` 是内核发出的封闭集合,与 `Finding` 的开放 `kind` 字符串(crates/octos-fleet/src/records.rs:447,一条可证伪的声明,component 字段做聚类键)形成对照:内核决策封闭,探索发现开放。
 
-恢复之后还有第二个问题:重启的 keeper 凭什么了解「之前发生了什么」。读全部 worker 的转录既不可行也无意义,`digest.rs`(861 行)就是为此存在的有界读侧。它的首页文档把失败模式说得很直白:goal 的瓶颈不是缺执行器,是控制器的上下文窗口成为问题复杂度的上限,若综合进度意味着读完每个 worker 的产出,架构师就退化成在 worker 之间传话的办事员。所以控制器从不直接读 finding,只读 `digest(findings, opts)`(digest.rs:175)的产物,一个体积不随项目增长的视图。纯函数设计:不吃 store、不吃 LLM、不吃时钟,水位线(`since_seq`,控制器已综合到的最大序号)、当前配置、字符预算全部是输入,整份逻辑可以表驱动测试。预算即设计:`max_chars` 默认 4,000(digest.rs:52),超限按节丢弃并如实声明(`Dropped` 结构 digest.rs:126 记录哪节丢了多少条),静默截断会读成「没有更多可看」,比显式砍列表更糟。每节排序最新在前,预算从尾部砍,该牺牲的是最旧的。产出五个分区:新 finding、翻案(overturn)、过期(finding 的 config 与当前构建漂移,`drift` 函数 digest.rs:156 比对)、聚类提示(component 被多少条路径引用,`cluster_min_paths` 默认 2)与按路径成本,外加返回给控制器作下一轮 `since_seq` 的水位线。digest 在恢复协调里的位置由此确定:reconcile 把账本状态修回自洽,digest 保证修完之后控制器以恒定成本重新进入。
+恢复之后还有第二个问题:重启的 keeper 凭什么了解「之前发生了什么」。读全部 worker 的转录既不可行也无意义,`crates/octos-fleet/src/digest.rs`(861 行)就是为此存在的有界读侧。它的首页文档把失败模式说得很直白:goal 的瓶颈不是缺执行器,是控制器的上下文窗口成为问题复杂度的上限,若综合进度意味着读完每个 worker 的产出,架构师就退化成在 worker 之间传话的办事员。所以控制器从不直接读 finding,只读 `digest(findings, opts)`(crates/octos-fleet/src/digest.rs:175)的产物,一个体积不随项目增长的视图。纯函数设计:不吃 store、不吃 LLM、不吃时钟,水位线(`since_seq`,控制器已综合到的最大序号)、当前配置、字符预算全部是输入,整份逻辑可以表驱动测试。预算即设计:`max_chars` 默认 4,000(crates/octos-fleet/src/digest.rs:52),超限按节丢弃并如实声明(`Dropped` 结构 crates/octos-fleet/src/digest.rs:126 记录哪节丢了多少条),静默截断会读成「没有更多可看」,比显式砍列表更糟。每节排序最新在前,预算从尾部砍,该牺牲的是最旧的。产出五个分区:新 finding、翻案(overturn)、过期(finding 的 config 与当前构建漂移,`drift` 函数 crates/octos-fleet/src/digest.rs:156 比对)、聚类提示(component 被多少条路径引用,`cluster_min_paths` 默认 2)与按路径成本,外加返回给控制器作下一轮 `since_seq` 的水位线。digest 在恢复协调里的位置由此确定:reconcile 把账本状态修回自洽,digest 保证修完之后控制器以恒定成本重新进入。
 
 ## 16.5 worker 装配:封闭注册表与常开安全阀
 
-worker 侧的第一个模块回答「一个 worker 到底能用什么工具」。`closed_registry.rs`(705 行)的 `build_fleet_worker_registry`(:92)从空注册表出发,按 `WorkerGrant.sorted_tools()` 装配封闭工具集,`ALLOWED`(:43)直接引用 `octos_fleet::BASE_TOOLS`(grant.rs:27)。grant 外的工具在注册表里不存在,重放时装配结果一致。grant 的四个类型在 `grant.rs`:`NetworkGrant`(:76,None / Hosts / Full)、`FsGrant`(:127,Workspace / Host)、`WorkerGrant`(:151,network / tools / fs / write_paths / create_only)、`GrantError`(:359);`validate()` 在 :247。这些类型与第 7 章逐行一致,语义与校验规则详见第 7 章,本章只消费它的结论。
+worker 侧的第一个模块回答「一个 worker 到底能用什么工具」。`crates/octos-fleet-worker/src/closed_registry.rs`(705 行)的 `build_fleet_worker_registry`(:92)从空注册表出发,按 `WorkerGrant.sorted_tools()` 装配封闭工具集,`ALLOWED`(:43)直接引用 `octos_fleet::BASE_TOOLS`(crates/octos-fleet/src/grant.rs:27)。grant 外的工具在注册表里不存在,重放时装配结果一致。grant 的四个类型在 `crates/octos-fleet/src/grant.rs`:`NetworkGrant`(:76,None / Hosts / Full)、`FsGrant`(:127,Workspace / Host)、`WorkerGrant`(:151,network / tools / fs / write_paths / create_only)、`GrantError`(:359);`validate()` 在 :247。这些类型与第 7 章逐行一致,语义与校验规则详见第 7 章,本章只消费它的结论。
 
 `crates/octos-fleet-worker/src/lib.rs` 的模块文档补了一条容易被误读的边界:封闭注册表是工具名的拒绝表,删掉的是停靠、扇出与网络工具;它本身不是网络或进程边界。幸存的 `shell` 在 Full 授权下仍能触网,仍能用 shell 内部后台化脱离子进程,字符串检查抓不住这些。真正的边界是沙箱及其进程组回收,所以 `AgentFactory::new` 要求显式传入沙箱工厂,不提供静默的空实现;传空实现会被 `tracing::warn!` 标记,生产必须给网络隔离沙箱。这条边界的要求写在 API 文档里,类型系统无法强制,是操作员责任。
 
-第二个模块是 escalate 阀(`escalate.rs`,293 行)。封闭 worker 缺某个能力(一个主机、一个工具、文件系统访问)时不能自扩授权,也不能停靠等人:它调用 `escalate` 工具,把 `EscalationRequest`(请求的 grant 加理由)写进共享槽(`EscalationSlot`:34,`EscalateTool`:37)立即返回。turn 结束后 `run_attempt` 读槽,若有值则调 `record_escalation`(store.rs:1336,同样校验 generation :1409 与 lease :1410),child 进 `Blocked`,交 keeper 决断:`goal_grant` 把 child 拨回 Ready 用更宽授权重跑,`goal_deny` 经 `deny_escalation`(store.rs:2025)把 Blocked 推到 Failed。`deny_escalation` 的返回类型在同一次写事务里顺带算出 `fleet_un_completable`(:2094 附近的设计注释):fleet 是否已无法自动完成,直接从 deny 后的持久状态推导,keeper 不必再做一次可能被跳过的读。工具永远注册、不随 grant 门控:最小授权的 worker 也必须能喊出「我被卡住了」。请求是 advisory,keeper 可以批得比要的少。
+第二个模块是 escalate 阀(`crates/octos-fleet-worker/src/escalate.rs`,293 行)。封闭 worker 缺某个能力(一个主机、一个工具、文件系统访问)时不能自扩授权,也不能停靠等人:它调用 `escalate` 工具,把 `EscalationRequest`(请求的 grant 加理由)写进共享槽(`EscalationSlot`:34,`EscalateTool`:37)立即返回。turn 结束后 `run_attempt` 读槽,若有值则调 `record_escalation`(crates/octos-fleet/src/store.rs:1336,同样校验 generation :1409 与 lease :1410),child 进 `Blocked`,交 keeper 决断:`goal_grant` 把 child 拨回 Ready 用更宽授权重跑,`goal_deny` 经 `deny_escalation`(crates/octos-fleet/src/store.rs:2025)把 Blocked 推到 Failed。`deny_escalation` 的返回类型在同一次写事务里顺带算出 `fleet_un_completable`(:2094 附近的设计注释):fleet 是否已无法自动完成,直接从 deny 后的持久状态推导,keeper 不必再做一次可能被跳过的读。工具永远注册、不随 grant 门控:最小授权的 worker 也必须能喊出「我被卡住了」。请求是 advisory,keeper 可以批得比要的少。
 
 ## 16.6 run_attempt 与有界池
 
-`worker.rs`(2,575 行)的 `run_attempt`(:177)执行一次 attempt,五个终态(`AttemptOutcome`:146):
+`crates/octos-fleet-worker/src/worker.rs`(2,575 行)的 `run_attempt`(:177)执行一次 attempt,五个终态(`AttemptOutcome`:146):
 
 ```rust
 pub enum AttemptOutcome {
@@ -203,15 +203,15 @@ pub enum AttemptOutcome {
 
 第一步就是 `mark_running`,两种落败分开处理:`Superseded` 说明 attempt 确实不是本次的,返回 `Aborted`,池解除守卫;`Err` 是基础设施故障,Launching 的 attempt 可能仍是本次的,返回 `RecordError`,守卫保持武装,交给 Drop 清理与恢复协调。这两条路径的区分(round-4 P1 修复)直接建立在 16.3 的「值与错误分离」上。执行体包在硬 `tokio::time::timeout` 里,AgentFactory 把每工具超时钳到 deadline,worker shell 每命令有硬上限,验收阶段也受剩余时间约束。worktree 模式(`WorktreeContext`:67)下交付物的定义是一个分支上的 commit,空分支算无交付。
 
-`pool.rs`(2,186 行)的 `FleetWorkerPool`(:109)是有界启动器,配置在 `PoolConfig`(:58):全局并发、单 fleet 并发、deadline、`owner_epoch`、租约 TTL、预留 token、工作区根、keeper profile、后端是否支持 repo 写。`dispatch`(:233)对同一 (fleet, task) 持 preflight 锁,跨「活性检查、worktree 准备、launch、spawn」全程,两个并发 dispatch 同一 Ready 任务时,输家看到赢家的在飞 attempt,被 launch 的 double-launch 拒绝兜住。worktree 是条件路径:仅当授权同时满足 Host 文件系统与 Full 网络、fleet 在 git 仓库上、后端支持 `.git` 写,三条全真才在任务稳定分支上开真 worktree,断点续跑从死者的最后 commit 开始;任一为假走 scratch 目录兜底。全信任门槛的推理写在 dispatch 的注释里:Host 文件系统加受限网络的组合并非真隔离(全文件系统能桥接任何网络围栏),干脆要求全网络,让两种逃逸都失去意义。提交锚点:`eadee2ae`(#1875)引入 WorkerGrant,`8fc66202`(#1881)落地 worktree worker。
+`crates/octos-fleet-worker/src/pool.rs`(2,186 行)的 `FleetWorkerPool`(:109)是有界启动器,配置在 `PoolConfig`(:58):全局并发、单 fleet 并发、deadline、`owner_epoch`、租约 TTL、预留 token、工作区根、keeper profile、后端是否支持 repo 写。`dispatch`(:233)对同一 (fleet, task) 持 preflight 锁,跨「活性检查、worktree 准备、launch、spawn」全程,两个并发 dispatch 同一 Ready 任务时,输家看到赢家的在飞 attempt,被 launch 的 double-launch 拒绝兜住。worktree 是条件路径:仅当授权同时满足 Host 文件系统与 Full 网络、fleet 在 git 仓库上、后端支持 `.git` 写,三条全真才在任务稳定分支上开真 worktree,断点续跑从死者的最后 commit 开始;任一为假走 scratch 目录兜底。全信任门槛的推理写在 dispatch 的注释里:Host 文件系统加受限网络的组合并非真隔离(全文件系统能桥接任何网络围栏),干脆要求全网络,让两种逃逸都失去意义。提交锚点:`eadee2ae`(#1875)引入 WorkerGrant,`8fc66202`(#1881)落地 worktree worker。
 
 有界池的「界」由两把信号量把守,`global_sem` 是全进程的总量上限,`per_fleet` 的 HashMap 按需建每 fleet 的信号量,条目永不修剪(上限是任务数,不是运行数)。这个设计把并发控制的真相放进了池而非内核:store 的 CAS 只保证不重不漏,至于同时跑几个、每 fleet 跑几个,是宿主的策略选择,内核不预设。拿不到许可的 dispatch 在信号量上排队,不产生任何持久状态;真正进入执行才走 launch 的事务。反过来,重启后池是空的,所有许可自然可用,不存在「许可表也要恢复」的次生问题:许可是内存里的信号量,恢复由 reconcile 对着持久状态完成,两者职责不重叠。
 
 ## 16.7 Fleet 表层与边界
 
-`fleet.rs`(3,062 行)的 `Fleet`(:190)在 store 之上组合 CAS 操作成整计划 API:`create`(:210)、`bind`(:300)、`view`(:324)、`ready_tasks`(:375)、`apply_edit`(:402)、`record_outcome`(:542)、`is_complete`(:583)、`summary`(:595)。它不改变 store 语义,是未来 keeper 与 `goal_get` / `goal_update` 工具编程的表层。
+`crates/octos-fleet/src/fleet.rs`(3,062 行)的 `Fleet`(:190)在 store 之上组合 CAS 操作成整计划 API:`create`(:210)、`bind`(:300)、`view`(:324)、`ready_tasks`(:375)、`apply_edit`(:402)、`record_outcome`(:542)、`is_complete`(:583)、`summary`(:595)。它不改变 store 语义,是未来 keeper 与 `goal_get` / `goal_update` 工具编程的表层。
 
-crate 里最大的文件不是 store,是 `sqlite_ledger.rs`(6,360 行,占两 crate 合计 23,730 行的四分之一强),`GoalLedger`(:13)落地于此。为什么一份代码里同时有 redb 和 sqlite?文件头三行注释给出理由:redb 是单写者单进程模型,SQLite 经 WAL 支持多进程访问,适合 master 与各 peer 作为独立进程共享同一份账本的 peer 架构。两个持久层的分工按访问者切:fleet 内核的六张表(fleet、child、attempt、plan、decision、outbox)由单一 serve 进程独占写,单写事务的 CAS 形状与 redb 的模型严丝合缝;goal 账本(goals、tasks、findings、escalations 表,findings 表带 goal 与 task 双索引,sqlite_ledger.rs:409-410)要被 keeper、worker 与 transition sync 多方读写,SQL 的行级内容寻址(`append_finding`:1623、`list_findings_since`:2132)与索引查询是更自然的形状。`sqlite_ledger.rs:13` 的 GoalLedger 属于第 18 章的主题,这里只留一个工程细节:并发打开同一份新 WAL 库有毫秒级初始化竞态(`database is locked`,busy handler 不覆盖),`open`(:222)用 rusqlite 默认 5 秒 busy_timeout,goal 状态迁移专用的 `open_with_busy_retry`(:245)才做 3 次有界重试并把超时压到 1 秒,这条路径只在阻塞线程上跑。ledger 与 store 互不替代:一个管多进程共享的 goal 账本,一个管单进程独占的执行状态机。
+crate 里最大的文件不是 store,是 `crates/octos-cli/src/autonomy/sqlite_ledger.rs`(6,360 行,占两 crate 合计 23,730 行的四分之一强),`GoalLedger`(:13)落地于此。为什么一份代码里同时有 redb 和 sqlite?文件头三行注释给出理由:redb 是单写者单进程模型,SQLite 经 WAL 支持多进程访问,适合 master 与各 peer 作为独立进程共享同一份账本的 peer 架构。两个持久层的分工按访问者切:fleet 内核的六张表(fleet、child、attempt、plan、decision、outbox)由单一 serve 进程独占写,单写事务的 CAS 形状与 redb 的模型严丝合缝;goal 账本(goals、tasks、findings、escalations 表,findings 表带 goal 与 task 双索引,crates/octos-fleet/src/sqlite_ledger.rs:409-410)要被 keeper、worker 与 transition sync 多方读写,SQL 的行级内容寻址(`append_finding`:1623、`list_findings_since`:2132)与索引查询是更自然的形状。`crates/octos-fleet/src/sqlite_ledger.rs:13` 的 GoalLedger 属于第 18 章的主题,这里只留一个工程细节:并发打开同一份新 WAL 库有毫秒级初始化竞态(`database is locked`,busy handler 不覆盖),`open`(:222)用 rusqlite 默认 5 秒 busy_timeout,goal 状态迁移专用的 `open_with_busy_retry`(:245)才做 3 次有界重试并把超时压到 1 秒,这条路径只在阻塞线程上跑。ledger 与 store 互不替代:一个管多进程共享的 goal 账本,一个管单进程独占的执行状态机。
 
 swarm 的扇出拓扑详见第 17 章;supervisor 的事件账本与唤醒调度详见第 12 章;WorkerGrant 的完整权限模型详见第 7 章。
 
