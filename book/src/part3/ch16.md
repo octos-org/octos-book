@@ -23,7 +23,7 @@
 
 ## 16.2 记录模型:一切先落盘
 
-内核的世界由六张 redb 表构成,全部定义在 `crates/octos-fleet/src/store.rs:48-53`:`fleets`(fleet 行)、`fleet_children`(子任务行)、`attempts`(尝试行)、`plans`(持久计划)、`decision_log`(追加式决策日志)、`outbox`(事件发件箱)。键都是字符串,值是 JSON。记录类型集中在 `crates/octos-fleet/src/records.rs`(808 行),关键锚点如下:
+内核的世界由六张 redb 表构成,全部定义在 `crates/octos-fleet/src/store.rs:46-51`:`fleets`(fleet 行)、`fleet_children`(子任务行)、`attempts`(尝试行)、`plans`(持久计划)、`decision_log`(追加式决策日志)、`outbox`(事件发件箱)。键都是字符串,值是 JSON。记录类型集中在 `crates/octos-fleet/src/records.rs`(808 行),关键锚点如下:
 
 | 符号 | 行号 | 内容 |
 |---|---|---|
@@ -177,7 +177,7 @@ stateDiagram-v2
 
 计划修订走 revision CAS:`replan`(crates/octos-fleet/src/store.rs:1512)带 `expected_revision`,递增 revision 并把任务的声明依赖同步到 child 行的反规范化副本;`retitle_task`(:1804)与 `set_task_grant`(:1898)同型。决策日志(`append_decision`:2648、`list_decisions`:2697)按序号追加,`DecisionKind` 是内核发出的封闭集合,与 `Finding` 的开放 `kind` 字符串(crates/octos-fleet/src/records.rs:447,一条可证伪的声明,component 字段做聚类键)形成对照:内核决策封闭,探索发现开放。
 
-恢复之后还有第二个问题:重启的 keeper 凭什么了解「之前发生了什么」。读全部 worker 的转录既不可行也无意义,`crates/octos-fleet/src/digest.rs`(861 行)就是为此存在的有界读侧。它的首页文档把失败模式说得很直白:goal 的瓶颈不是缺执行器,是控制器的上下文窗口成为问题复杂度的上限,若综合进度意味着读完每个 worker 的产出,架构师就退化成在 worker 之间传话的办事员。所以控制器从不直接读 finding,只读 `digest(findings, opts)`(crates/octos-fleet/src/digest.rs:175)的产物,一个体积不随项目增长的视图。纯函数设计:不吃 store、不吃 LLM、不吃时钟,水位线(`since_seq`,控制器已综合到的最大序号)、当前配置、字符预算全部是输入,整份逻辑可以表驱动测试。预算即设计:`max_chars` 默认 4,000(crates/octos-fleet/src/digest.rs:52),超限按节丢弃并如实声明(`Dropped` 结构 crates/octos-fleet/src/digest.rs:126 记录哪节丢了多少条),静默截断会读成「没有更多可看」,比显式砍列表更糟。每节排序最新在前,预算从尾部砍,该牺牲的是最旧的。产出五个分区:新 finding、翻案(overturn)、过期(finding 的 config 与当前构建漂移,`drift` 函数 crates/octos-fleet/src/digest.rs:156 比对)、聚类提示(component 被多少条路径引用,`cluster_min_paths` 默认 2)与按路径成本,外加返回给控制器作下一轮 `since_seq` 的水位线。digest 在恢复协调里的位置由此确定:reconcile 把账本状态修回自洽,digest 保证修完之后控制器以恒定成本重新进入。
+恢复之后还有第二个问题:重启的 keeper 凭什么了解「之前发生了什么」。读全部 worker 的转录既不可行也无意义,`crates/octos-fleet/src/digest.rs`(861 行)就是为此存在的有界读侧。它的首页文档把失败模式说得很直白:goal 的瓶颈不是缺执行器,是控制器的上下文窗口成为问题复杂度的上限,若综合进度意味着读完每个 worker 的产出,架构师就退化成在 worker 之间传话的办事员。所以控制器从不直接读 finding,只读 `digest(findings, opts)`(crates/octos-fleet/src/digest.rs:175)的产物,一个体积不随项目增长的视图。纯函数设计:不吃 store、不吃 LLM、不吃时钟,水位线(`since_seq`,控制器已综合到的最大序号)、当前配置、字符预算全部是输入,整份逻辑可以表驱动测试。预算即设计:`max_chars` 默认 4,000(crates/octos-fleet/src/digest.rs:56),超限按节丢弃并如实声明(`Dropped` 结构 crates/octos-fleet/src/digest.rs:126 记录哪节丢了多少条),静默截断会读成「没有更多可看」,比显式砍列表更糟。每节排序最新在前,预算从尾部砍,该牺牲的是最旧的。产出五个分区:新 finding、翻案(overturn)、过期(finding 的 config 与当前构建漂移,`drift` 函数 crates/octos-fleet/src/digest.rs:156 比对)、聚类提示(component 被多少条路径引用,`cluster_min_paths` 默认 2)与按路径成本,外加返回给控制器作下一轮 `since_seq` 的水位线。digest 在恢复协调里的位置由此确定:reconcile 把账本状态修回自洽,digest 保证修完之后控制器以恒定成本重新进入。
 
 ## 16.5 worker 装配:封闭注册表与常开安全阀
 
@@ -211,7 +211,7 @@ pub enum AttemptOutcome {
 
 `crates/octos-fleet/src/fleet.rs`(3,062 行)的 `Fleet`(:190)在 store 之上组合 CAS 操作成整计划 API:`create`(:210)、`bind`(:300)、`view`(:324)、`ready_tasks`(:375)、`apply_edit`(:402)、`record_outcome`(:542)、`is_complete`(:583)、`summary`(:595)。它不改变 store 语义,是未来 keeper 与 `goal_get` / `goal_update` 工具编程的表层。
 
-crate 里最大的文件不是 store,是 `crates/octos-cli/src/autonomy/sqlite_ledger.rs`(6,360 行,占两 crate 合计 23,730 行的四分之一强),`GoalLedger`(:13)落地于此。为什么一份代码里同时有 redb 和 sqlite?文件头三行注释给出理由:redb 是单写者单进程模型,SQLite 经 WAL 支持多进程访问,适合 master 与各 peer 作为独立进程共享同一份账本的 peer 架构。两个持久层的分工按访问者切:fleet 内核的六张表(fleet、child、attempt、plan、decision、outbox)由单一 serve 进程独占写,单写事务的 CAS 形状与 redb 的模型严丝合缝;goal 账本(goals、tasks、findings、escalations 表,findings 表带 goal 与 task 双索引,crates/octos-fleet/src/sqlite_ledger.rs:409-410)要被 keeper、worker 与 transition sync 多方读写,SQL 的行级内容寻址(`append_finding`:1623、`list_findings_since`:2132)与索引查询是更自然的形状。`crates/octos-fleet/src/sqlite_ledger.rs:13` 的 GoalLedger 属于第 18 章的主题,这里只留一个工程细节:并发打开同一份新 WAL 库有毫秒级初始化竞态(`database is locked`,busy handler 不覆盖),`open`(:222)用 rusqlite 默认 5 秒 busy_timeout,goal 状态迁移专用的 `open_with_busy_retry`(:245)才做 3 次有界重试并把超时压到 1 秒,这条路径只在阻塞线程上跑。ledger 与 store 互不替代:一个管多进程共享的 goal 账本,一个管单进程独占的执行状态机。
+crate 里最大的文件不是 store,是 `crates/octos-fleet/src/sqlite_ledger.rs`(6,360 行,占两 crate 合计 23,730 行的四分之一强),`GoalLedger`(:13)落地于此。为什么一份代码里同时有 redb 和 sqlite?文件头三行注释给出理由:redb 是单写者单进程模型,SQLite 经 WAL 支持多进程访问,适合 master 与各 peer 作为独立进程共享同一份账本的 peer 架构。两个持久层的分工按访问者切:fleet 内核的六张表(fleet、child、attempt、plan、decision、outbox)由单一 serve 进程独占写,单写事务的 CAS 形状与 redb 的模型严丝合缝;goal 账本(goals、tasks、findings、escalations 表,findings 表带 goal 与 task 双索引,crates/octos-fleet/src/sqlite_ledger.rs:409-410)要被 keeper、worker 与 transition sync 多方读写,SQL 的行级内容寻址(`append_finding`:1623、`list_findings_since`:2132)与索引查询是更自然的形状。`crates/octos-fleet/src/sqlite_ledger.rs:13` 的 GoalLedger 属于第 18 章的主题,这里只留一个工程细节:并发打开同一份新 WAL 库有毫秒级初始化竞态(`database is locked`,busy handler 不覆盖),`open`(:222)用 rusqlite 默认 5 秒 busy_timeout,goal 状态迁移专用的 `open_with_busy_retry`(:245)才做 3 次有界重试并把超时压到 1 秒,这条路径只在阻塞线程上跑。ledger 与 store 互不替代:一个管多进程共享的 goal 账本,一个管单进程独占的执行状态机。
 
 swarm 的扇出拓扑详见第 17 章;supervisor 的事件账本与唤醒调度详见第 12 章;WorkerGrant 的完整权限模型详见第 7 章。
 
