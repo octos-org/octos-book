@@ -44,9 +44,9 @@ pub trait Channel: Send + Sync {
 
 对于支持消息编辑的频道（`supports_edit()` 返回 `true`），octos 使用三步法实现流式输出：
 
-1. **`send_with_id()`**：发送初始消息（可能只有几个 token），返回平台消息 ID
-2. **`edit_message()`**：随着 LLM 流式输出，不断更新同一条消息的内容（`../octos/crates/octos-bus/src/channel.rs:85-93`）
-3. **`finish_stream()`**：流结束后发送最终版本；默认实现仍回退到 `edit_message()`（`../octos/crates/octos-bus/src/channel.rs:122-133`）
+1. `send_with_id()`：发送初始消息（可能只有几个 token），返回平台消息 ID
+2. `edit_message()`：随着 LLM 流式输出，不断更新同一条消息的内容（`../octos/crates/octos-bus/src/channel.rs:85-93`）
+3. `finish_stream()`：流结束后发送最终版本；默认实现仍回退到 `edit_message()`（`../octos/crates/octos-bus/src/channel.rs:122-133`）
 
 这种模式让用户看到 Agent 的回复逐渐生成，而不是等待完整响应后一次性显示。Telegram 和 Discord 都支持这种模式。对于不支持编辑的频道（如邮件），退回到等待完整响应后一次性发送。
 
@@ -58,7 +58,7 @@ pub trait Channel: Send + Sync {
 - `finish_stream_bound(chat_id, message_id, content, thread_id)`
 - `send_raw_sse_bound(chat_id, json, thread_id)`
 
-这些方法的核心不是多传一个字段，而是在并发 Web turn 下把每个流式增量、最终消息和历史 raw SSE 事件都显式绑定到 originating `thread_id`（`../octos/crates/octos-bus/src/channel.rs:107-201`）。旧路径会从 message id 解码或从 per-chat sticky map 里恢复 thread；当同一个 chat 连续快速发起多个 turn 时，sticky map 可能已经被后一个 turn 旋转，导致前一个 turn 的 late delta 被写进后一个气泡。bound API 的语义是：**调用方已经知道这个增量属于哪个 turn，就不要再从共享状态里猜。**
+这些方法的核心不是多传一个字段，而是在并发 Web turn 下把每个流式增量、最终消息和历史 raw SSE 事件都显式绑定到 originating `thread_id`（`../octos/crates/octos-bus/src/channel.rs:107-201`）。旧路径会从 message id 解码或从 per-chat sticky map 里恢复 thread；当同一个 chat 连续快速发起多个 turn 时，sticky map 可能已经被后一个 turn 旋转，导致前一个 turn 的 late delta 被写进后一个气泡。bound API 的语义是：调用方已经知道这个增量属于哪个 turn，就不要再从共享状态里猜。
 
 ```mermaid
 sequenceDiagram
@@ -119,9 +119,9 @@ flowchart TD
 
 **图 10-1：5 级消息切割策略。** 优先在语义边界切割，硬切是最后手段。
 
-**MAX_CHUNKS = 50**：防止极长消息被分割为数百个小消息导致 DoS。超过上限时，代码不会继续在最后一块后面追加文本，而是单独插入一个 `"[message truncated - N chars omitted]"` 的截断块（`../octos/crates/octos-bus/src/coalesce.rs:47`（`MAX_CHUNKS` 常量在同文件 27 行，截断时打 `warn!` 日志））。
+MAX_CHUNKS = 50：防止极长消息被分割为数百个小消息导致 DoS。超过上限时，代码不会继续在最后一块后面追加文本，而是单独插入一个 `"[message truncated - N chars omitted]"` 的截断块（`../octos/crates/octos-bus/src/coalesce.rs:47`（`MAX_CHUNKS` 常量在同文件 27 行，截断时打 `warn!` 日志））。
 
-**UTF-8 安全**：硬切时使用 `is_char_boundary()` 回退到安全的字符边界（与 octos-core 的 `truncate_utf8` 使用相同的策略，详见第 2 章）。
+UTF-8 安全：硬切时使用 `is_char_boundary()` 回退到安全的字符边界（与 octos-core 的 `truncate_utf8` 使用相同的策略，详见第 2 章）。
 
 **平台特定限制**（`../octos/crates/octos-bus/src/coalesce.rs:5-24`）：
 
@@ -181,7 +181,7 @@ pub struct Session {
 
 当前源码的 Session 持久化比“一个 JSONL 文件”稍复杂一些，核心有两个事实。
 
-第一，**JSONL 文件的第一行不是消息，而是 `SessionMeta` 元数据**，后续每一行才是 `Message`（`../octos/crates/octos-bus/src/session.rs:560-584`、`../octos/crates/octos-bus/src/session.rs:1365-1381`、`../octos/crates/octos-bus/src/session.rs:2992-3060`）。所以它不是“纯消息流”，而是“头一行 schema/meta + 后续消息行”的轻量日志格式。`SessionMeta` 现在也承载 `title`、`title_manual` 与 `child_contracts`，这使侧边栏标题和后台子任务状态不必塞进普通消息文本。
+第一，JSONL 文件的第一行不是消息，而是 `SessionMeta` 元数据，后续每一行才是 `Message`（`../octos/crates/octos-bus/src/session.rs:560-584`、`../octos/crates/octos-bus/src/session.rs:1365-1381`、`../octos/crates/octos-bus/src/session.rs:2992-3060`）。所以它不是“纯消息流”，而是“头一行 schema/meta + 后续消息行”的轻量日志格式。`SessionMeta` 现在也承载 `title`、`title_manual` 与 `child_contracts`，这使侧边栏标题和后台子任务状态不必塞进普通消息文本。
 
 第二，**当前代码同时支持旧布局和新布局**：
 
@@ -190,12 +190,12 @@ pub struct Session {
 
 只有在 legacy flat 布局里，文件名才由下面这两部分构成：
 
-1. **Percent-encoded SessionKey**（`../octos/crates/octos-bus/src/session.rs:129-140`）：将 SessionKey 中的路径不安全字符（`/`、`:`、`#`）编码为 `%2F`、`%3A`、`%23`
-2. **FNV-1a 64-bit hash 后缀**（`../octos/crates/octos-bus/src/session.rs:116-127`、`../octos/crates/octos-bus/src/session.rs:1554-1610`）：当编码后的名字过长、需要截断时，追加稳定哈希，避免“截断后同名前缀”碰撞
+1. Percent-encoded SessionKey（`../octos/crates/octos-bus/src/session.rs:129-140`）：将 SessionKey 中的路径不安全字符（`/`、`:`、`#`）编码为 `%2F`、`%3A`、`%23`
+2. FNV-1a 64-bit hash 后缀（`../octos/crates/octos-bus/src/session.rs:116-127`、`../octos/crates/octos-bus/src/session.rs:1554-1610`）：当编码后的名字过长、需要截断时，追加稳定哈希，避免“截断后同名前缀”碰撞
 
 例如，旧布局中的长 key 可能落成 `telegram%3A12345_0123ABCD....jsonl`；而新布局则更像 `users/telegram%3A12345/sessions/default.jsonl`。
 
-**Schema 版本**：`CURRENT_SESSION_SCHEMA = 1`（`../octos/crates/octos-bus/src/session.rs:15-16`），为未来格式迁移预留。
+Schema 版本：`CURRENT_SESSION_SCHEMA = 1`（`../octos/crates/octos-bus/src/session.rs:15-16`），为未来格式迁移预留。
 
 写入也分两类：
 - 日常追加消息走 `append_to_disk()`，新文件先写 metadata，再逐条 append message 行（`../octos/crates/octos-bus/src/session.rs:1312-1388`、`../octos/crates/octos-bus/src/session.rs:2992-3060`）
@@ -203,7 +203,7 @@ pub struct Session {
 
 当前 rewrite 的临时文件名也做了并发修正：`rewrite_tmp_path()` 使用进程 PID + 单调 counter 生成 `{target}.jsonl.{pid}-{seq}.tmp`，避免同一个父 session 被多个后台子任务同时 rewrite 时共享单一 `.tmp` 文件（`../octos/crates/octos-bus/src/session.rs:90-117`）。这不是性能优化，而是正确性修复：共享 temp path 会让两个 writer 互相截断，最后只有一个 rename 成功，另一个子任务可能被误标成 orphaned。
 
-**10MB 文件限制**：单个会话文件最大 10MB，防止失控的对话历史耗尽磁盘（`../octos/crates/octos-bus/src/session.rs:792-793`、`../octos/crates/octos-bus/src/session.rs:1197-1208`、`../octos/crates/octos-bus/src/session.rs:1644-1649`）。
+10MB 文件限制：单个会话文件最大 10MB，防止失控的对话历史耗尽磁盘（`../octos/crates/octos-bus/src/session.rs:792-793`、`../octos/crates/octos-bus/src/session.rs:1197-1208`、`../octos/crates/octos-bus/src/session.rs:1644-1649`）。
 
 ### 11.3.3 `/new` Fork 机制
 
@@ -219,11 +219,11 @@ pub struct Session {
 
 SessionManager（`../octos/crates/octos-bus/src/session.rs:903-905`）管理 admin/命令侧看到的会话缓存；而真正在线处理消息时，`SessionActor` 会转而持有自己的 `SessionHandle`，避免所有活跃会话共用一个大锁（`../octos/crates/octos-bus/src/session.rs:2426-2530`）。
 
-- **LRU 内存缓存**：活跃会话在内存中保持，减少磁盘 I/O
+- LRU 内存缓存：活跃会话在内存中保持，减少磁盘 I/O
 - **惰性加载**：不活跃的会话按需从磁盘加载
 - **布局兼容**：同时扫描 legacy flat layout 和 per-user layout
 - **用户列表性能边界**：`list_top_level_sessions*()` 会跳过 `child-*` 与 `*.tasks` 等内部 topic，避免用户目录下大量后台子会话拖慢 `/api/sessions`（`../octos/crates/octos-bus/src/session.rs:965-1005`、`../octos/crates/octos-bus/src/session.rs:934-947`）
-- **同 key 写入串行化**：`persist_message_through_canonical_path()` 通过 per-key Tokio mutex 串行化 `SessionActor`、`ApiChannel` 与 `/chat` 路径的同 session 写入，避免多个独立 `SessionHandle` 同时看到相同长度并返回重复 sequence（`../octos/crates/octos-bus/src/session.rs:2332-2420`）
+- 同 key 写入串行化：`persist_message_through_canonical_path()` 通过 per-key Tokio mutex 串行化 `SessionActor`、`ApiChannel` 与 `/chat` 路径的同 session 写入，避免多个独立 `SessionHandle` 同时看到相同长度并返回重复 sequence（`../octos/crates/octos-bus/src/session.rs:2332-2420`）
 
 ### 11.3.5 thread_id 持久化：新写入 fail closed，旧记录 load-time synthesis
 
@@ -323,7 +323,7 @@ pub fn split_message(text: &str, config: &ChunkConfig) -> Vec<String> {
 关键设计点：
 
 1. **提前返回**：空字符串直接返回空 `Vec`，短消息返回单块
-2. **先做 UTF-8 安全窗口，再找语义断点**：避免把 `find_break_point()` 变成“逻辑断点 + 编码边界”双重职责
+2. 先做 UTF-8 安全窗口，再找语义断点：避免把 `find_break_point()` 变成“逻辑断点 + 编码边界”双重职责
 3. **边界清洗**：`trim_end()`、去掉前导换行、最多跳过一个空格，让 chunk 之间的视觉边界更自然
 
 ##### 窗口语义:先裁剪、再寻点
@@ -385,13 +385,13 @@ octos-bus 通过 feature flags 按需编译各频道实现。每个频道实现 
 
 表中较晚接入的四个频道值得各花一段说清定位。
 
-**DingTalk**（crates/octos-bus/src/dingtalk_channel.rs，544 行）走「自定义机器人发送 + outgoing-robot webhook 接收」的双通道模式。关键在 `sessionWebhook`：outgoing 事件里携带一个短期有效的会话级 webhook URL，频道按会话缓存它，回复优先发往这个缓存地址而不是全局配置的 webhook（crates/octos-bus/src/dingtalk_channel.rs:281、发送优先级判定 188-199；无缓存且无配置时报错于 196 行）。这样设计是因为钉钉的 outgoing 模式下，回复必须回到「发起这次对话的那个机器人会话」，全局地址做不到这一点，而短期 URL 又要求缓存失效后能回退。
+DingTalk（crates/octos-bus/src/dingtalk_channel.rs，544 行）走「自定义机器人发送 + outgoing-robot webhook 接收」的双通道模式。关键在 `sessionWebhook`：outgoing 事件里携带一个短期有效的会话级 webhook URL，频道按会话缓存它，回复优先发往这个缓存地址而不是全局配置的 webhook（crates/octos-bus/src/dingtalk_channel.rs:281、发送优先级判定 188-199；无缓存且无配置时报错于 196 行）。这样设计是因为钉钉的 outgoing 模式下，回复必须回到「发起这次对话的那个机器人会话」，全局地址做不到这一点，而短期 URL 又要求缓存失效后能回退。
 
-**LINE**（crates/octos-bus/src/line_channel.rs，826 行）是标准的 webhook + Messaging API 组合，安全链路在签名校验：对原始请求体做 HMAC-SHA256，Base64 后与 `X-Line-Signature` 头做常数时间比较（crates/octos-bus/src/line_channel.rs:87-95，`ct_eq` 来自 subtle crate）。用常数时间比较而不是 `==`，是防时序侧信道逐字节猜签名；用原始 body 而不是反序列化后的字符串，是防 JSON 规整化差异导致验签失败。这两个选择都是平台集成里反复踩坑后的标准答案。
+LINE（crates/octos-bus/src/line_channel.rs，826 行）是标准的 webhook + Messaging API 组合，安全链路在签名校验：对原始请求体做 HMAC-SHA256，Base64 后与 `X-Line-Signature` 头做常数时间比较（crates/octos-bus/src/line_channel.rs:87-95，`ct_eq` 来自 subtle crate）。用常数时间比较而不是 `==`，是防时序侧信道逐字节猜签名；用原始 body 而不是反序列化后的字符串，是防 JSON 规整化差异导致验签失败。这两个选择都是平台集成里反复踩坑后的标准答案。
 
-**Matrix User**（crates/octos-bus/src/matrix_user_channel.rs，1,525 行）与第 11.5 节表格里的 Matrix 行是同一平台的两种接入形态。AppService 模式需要 homeserver 侧注册，用户账号模式只需要 access token 或密码登录，然后对 Client-Server `/sync` API 做长轮询，超时 30 秒（crates/octos-bus/src/matrix_user_channel.rs:44 的 `SYNC_TIMEOUT_MS`）。长轮询让没有推送权限的自建服务器也能近实时收消息：请求挂着，有事件才返回，返回后立刻发下一个。它没有独立的 Cargo feature，随 `matrix` 一起编译，因为两者共享 Markdown-to-HTML 渲染和路径编码等基础设施。
+Matrix User（crates/octos-bus/src/matrix_user_channel.rs，1,525 行）与第 11.5 节表格里的 Matrix 行是同一平台的两种接入形态。AppService 模式需要 homeserver 侧注册，用户账号模式只需要 access token 或密码登录，然后对 Client-Server `/sync` API 做长轮询，超时 30 秒（crates/octos-bus/src/matrix_user_channel.rs:44 的 `SYNC_TIMEOUT_MS`）。长轮询让没有推送权限的自建服务器也能近实时收消息：请求挂着，有事件才返回，返回后立刻发下一个。它没有独立的 Cargo feature，随 `matrix` 一起编译，因为两者共享 Markdown-to-HTML 渲染和路径编码等基础设施。
 
-**CLI**（crates/octos-bus/src/cli_channel.rs，137 行）是最小实现样本：stdin 按行读、stdout 写提示符（crates/octos-bus/src/cli_channel.rs:52-57），没有网络栈、没有鉴权、没有 feature 门控，始终编译。它存在的意义是让 `Channel` trait 的最小契约可验证：一个频道只需实现 `name()`、`start()`、`send()` 三个方法就能跑通全链路，也是新频道开发时最便宜的参照物。
+CLI（crates/octos-bus/src/cli_channel.rs，137 行）是最小实现样本：stdin 按行读、stdout 写提示符（crates/octos-bus/src/cli_channel.rs:52-57），没有网络栈、没有鉴权、没有 feature 门控，始终编译。它存在的意义是让 `Channel` trait 的最小契约可验证：一个频道只需实现 `name()`、`start()`、`send()` 三个方法就能跑通全链路，也是新频道开发时最便宜的参照物。
 
 每个频道实现都是独立的——Telegram 频道的 bug 不会影响 Discord，因为它们是不同的代码路径，通过不同的 feature flag 编译。需要注意的是，`octos chat` 的 CLI readline 不在 `octos-bus` 的 Cargo feature 频道列表中；bus 侧 feature-gated 频道当前为 `api`、`telegram`、`discord`、`slack`、`whatsapp`、`email`、`feishu`、`dingtalk`、`line`、`twilio`、`wecom`、`matrix`、`wecom-bot`、`qq-bot`、`wechat` 共 15 个，其中 `crates/octos-bus/src/dingtalk_channel.rs` 与 `crates/octos-bus/src/line_channel.rs` 是较新的接入；`crates/octos-bus/src/matrix_user_channel.rs` 没有独立 feature，随 `matrix` 一起编译；`crates/octos-bus/src/cli_channel.rs` 始终编译，三类合计 17 个频道源文件。这种隔离设计是 octos-bus 约 40K 行 Rust 源文件中大部分来自各频道独立实现的原因。
 
@@ -399,17 +399,17 @@ octos-bus 通过 feature flags 按需编译各频道实现。每个频道实现 
 
 > ### 工程决策侧栏：为什么 JSONL 而非 SQLite / 单 JSON 文件
 >
-> **方案一：SQLite**
+> 方案一：SQLite
 >
 > 优势：结构化查询、索引、事务、跨会话分析方便
 > 劣势：需要显式 schema / migration 层；会话文件不再能直接用文本工具检查；和当前“每个会话按 key 读写”的访问模式相比，抽象更重
 >
-> **方案二：单个 JSON 文件**
+> 方案二：单个 JSON 文件
 >
 > 优势：实现最直观，序列化/反序列化简单
 > 劣势：任何一次写入都要重写整个文件；崩溃恢复最脆弱；多会话下最容易形成热点锁
 >
-> **方案三：JSONL（octos 的选择）**
+> 方案三：JSONL（octos 的选择）
 >
 > 优势：
 > - 第一行 metadata、后续逐行消息，既能 append，也能整会话 rewrite
@@ -429,7 +429,7 @@ octos-bus 通过 feature flags 按需编译各频道实现。每个频道实现 
 
 ### 11.6.1 FNV-1a 哈希
 
-在 legacy flat layout 里，**当编码后的 SessionKey 需要截断时**，文件名会追加 FNV-1a 64-bit 哈希后缀（`../octos/crates/octos-bus/src/session.rs:116-127`、`../octos/crates/octos-bus/src/session.rs:1554-1610`）。这是一个非密码学哈希函数，优势在于实现极简且跨 Rust 版本稳定。它不用于安全目的（不防碰撞攻击），只用于“截断后文件名仍然可区分”。
+在 legacy flat layout 里，当编码后的 SessionKey 需要截断时，文件名会追加 FNV-1a 64-bit 哈希后缀（`../octos/crates/octos-bus/src/session.rs:116-127`、`../octos/crates/octos-bus/src/session.rs:1554-1610`）。这是一个非密码学哈希函数，优势在于实现极简且跨 Rust 版本稳定。它不用于安全目的（不防碰撞攻击），只用于“截断后文件名仍然可区分”。
 
 ```rust
 fn fnv1a_64(data: &[u8]) -> u64 {
@@ -462,16 +462,16 @@ fn fnv1a_64(data: &[u8]) -> u64 {
 1. **Channel trait**：当前是 26 方法接口，但只有 `name()`、`start()`、`send()` 没有默认实现；流式编辑、typing、embed、health check 都是按需覆盖的扩展层。
 2. **Coalescing**：5 级语义切割（段落→换行→句子→空格→硬切），MAX_CHUNKS=50 防 DoS，UTF-8 安全，超限时会追加独立的 truncation chunk。
 3. **Session**：JSONL 文件第一行是 metadata，不是消息；当前同时兼容 legacy flat layout 和 per-user layout，`/new`/fork 会复制最近 N 条消息并记录 `parent_key`。
-4. **Thread binding**：新写入路径要求 Assistant/Tool 预先绑定 `thread_id`，legacy load 则只做内存补齐；bound channel API 防止并发 turn 的流式增量落到错误气泡。
+4. Thread binding：新写入路径要求 Assistant/Tool 预先绑定 `thread_id`，legacy load 则只做内存补齐；bound channel API 防止并发 turn 的流式增量落到错误气泡。
 5. **Durable observer 与 child contract**：`message/persisted` 在磁盘写入和内存 mirror 更新后发出；后台子任务通过 `ChildSessionContract` 持久化 terminal/join/failure 状态，而不是只靠普通消息文本。
 
 ---
 
 ## 延伸阅读
 
-- **Server-Sent Events**：MDN "Using server-sent events" — 理解流式消息推送模式
-- **Telegram Bot API**：https://core.telegram.org/bots/api — Telegram 频道的 API 细节
-- **JSONL 格式**：https://jsonlines.org/ — 行分隔 JSON 格式规范
+- Server-Sent Events：MDN "Using server-sent events" — 理解流式消息推送模式
+- Telegram Bot API：https://core.telegram.org/bots/api — Telegram 频道的 API 细节
+- JSONL 格式：https://jsonlines.org/ — 行分隔 JSON 格式规范
 
 ## 思考题
 
