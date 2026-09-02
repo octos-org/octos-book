@@ -17,7 +17,7 @@
 
 - [第 5 章：Agent Loop：一次对话的完整生命周期](./part2/ch05.md)
 - [第 6 章：工具系统：内置工具的设计模式](./part2/ch06.md)
-- [第 7 章：安全纵深与能力授予](./part2/ch07.md)
+- [第 7 章：安全纵深：沙箱 fail-closed、注入防御与能力授予](./part2/ch07.md)
 - [第 8 章：上下文管理：让 Agent 在有限窗口中高效工作](./part2/ch08.md)
 - [第 9 章：扩展机制：Skills 与 Plugins 双轨制](./part2/ch09.md)
 - [第 10 章：Harness：校验器、事件 ABI 与 Schema 版本化](./part2/ch10.md)
