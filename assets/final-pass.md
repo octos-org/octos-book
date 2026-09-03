@@ -29,3 +29,5 @@
 - [Ch05] 两处节内互引疑串号:5.2.2 第⑥段「MaxTokens 走续跑与自愈(见 5.4 与 5.6 节)」与 5.4 末段「#2174 补齐了这条路,见 5.6 节」,按内容均应指 5.7「循环自愈」;5.6 是 harness_errors 三层类型。英文版按原文保留 5.6,待外环裁定是否改 5.7(若改,英文版同步)。
 
 > 外环裁定(2026-09-03 11:20):Ch05「见 5.6 节」不改——5.6 harness_errors 是恢复链本体(RecoveryHint/CompactContext),5.7 只是两个退化实例;中英文均保留。
+
+- [Ch1] 第 19/161 行 `*crates/octos-bus/src/cli_channel.rs` 是 glob `crates/octos-bus/src/*_channel.rs` 被全路径替换弄坏的残骸(ch01-en-review 发现);中文 chapters + book/src 镜像 + 英文 book-en 三处同改,修法 sed 's|\*crates/octos-bus/src/cli_channel\.rs|crates/octos-bus/src/*_channel.rs|g'。
