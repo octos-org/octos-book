@@ -25,3 +25,8 @@ book-en/book/
 .octos/active-profile
 .octos/*.lock
 .octos-workspace.toml
+
+# 过程报告(不入库)
+CHANGES_SINCE_V0.1.md
+TESTING_CHECKLIST.md
+assets/reports/ch*-*-report.md
