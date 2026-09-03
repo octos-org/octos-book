@@ -98,3 +98,12 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | configuration lane | configuration lane | mcp_servers / sub_providers, ch09 |
 | 名称保护 | name protection | PROTECTED_NAMES, ch09 |
 | 传输存活 | transport liveness | registry 持有 MCP 传输, ch09 |
+| 会话 actor | session actor | one tokio task owns one session, ch12 |
+| 批次准入 | batch admission | Safe/Exclusive tool batch policy, ch12 |
+| 水位线 | watermark | last_sequence monotonic high-water mark, ch12 |
+| 信箱 | mailbox | actor message queue, ch12 |
+| 代 / epoch | epoch | daemon-start identity in Lease.owner_epoch, ch12 |
+| 唤醒 outbox | outbox | fleet kernel wakeups, fleet_wake.rs, ch12 |
+| 零 token 监视器 | zero-token monitor | monitor_runtime.rs, ch12 |
+| 进程隐喻 | process metaphor | peer ≈ process vs subagent ≈ thread, ch12 |
+| 收养 | adoption | Parked task reclaimed by reconnecting client, ch12 |
