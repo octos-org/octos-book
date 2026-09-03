@@ -67,3 +67,13 @@ Do not stop just to ask about:
 | master | primary(5.3) | 派单、收割、裁决(含 wontdo 与事实矛盾)、验收、commit、ACK | 验收机械项复跑命令,不采信 peer 的口头计数 |
 
 附录 A/B/D 的表格生成、`book/src/SUMMARY.md` 改名与条目、镜像同步这类纯搬运也走 `cheap`。
+
+## 英文版车道(book-en,2026-09-03 立项;契约 specs/translation-en.spec.md)
+
+1. 源是 `chapters/<file>.md` 定稿,目标是 `book-en/src/<same path>.md`;英文版只维护这一份。
+2. 动笔前读 `.octos/skills/trilingual-collab-en.md`(禁用词、模式、约定)与 `assets/glossary-en.md`;新术语先加表再用。
+3. 母语重写,不逐句直译;但事实、数字、源码引用(路径:行号)、代码块、mermaid 边数与中文版逐一相同。自证命令:`~/.octos/outer/verify-en.sh chapters/<zh>.md book-en/src/<en>.md` 必须 0 FAIL。
+4. 固定标签:`> **Positioning**:`(章首)、`> **Version note**:`(章末)、`> **Engineering decision**:`(侧栏)、`## Further reading`、`## Exercises`、`see Chapter N`。
+5. 不改中文版;发现中文版错误写进 `assets/final-pass.md` 交外环裁定。
+6. 每章 commit 只含本章英文文件(首章可含 glossary);`cd book-en && mdbook build` 零警告是硬门。
+7. 车道:B `chNN-en`(strong)→ C1 `chNN-en-check`(cheap,跑 verify-en.sh + 数字/引用集合比对,计数附命令输出)→ C2 `chNN-en-review`(strong,英文去味与技术读校,不改事实)。
