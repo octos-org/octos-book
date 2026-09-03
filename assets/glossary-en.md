@@ -87,3 +87,10 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | 实体库 | entity bank | two-level prompt injection, ch04 |
 | 写入闸 / 渲染闸 | write gate / render gate | guard.rs, ch04 |
 | 优雅降级 | graceful degradation | BM25 without embeddings, ch04 |
+| 安全纵深 | defense in depth | ch07 |
+| 哨兵 | sentinel | NoSandbox / RefusingSandbox, ch07 |
+| 写围栏 | write fence | #1976 per-path fencing, ch07 |
+| 脱敏 | redaction | sanitize_tool_output, ch07 |
+| 降级 | degradation | Auto sandbox fallback, ch07 |
+| 审批 | approval | ApprovalPolicy, ch07 |
+| 允许表 | allowlist | NetworkGrant::Hosts, ch07 |
