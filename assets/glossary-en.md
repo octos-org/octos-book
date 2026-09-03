@@ -124,15 +124,13 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | 回流通道 | return channel | peer_findings/ledger_findings/open_escalations, ch18 |
 | 预算收尾 | wrap-up turn | GoalWrapUp, ch18 |
 | 栅栏分支 | fence branch | peer/<slug> branch in the clone, ch18 |
-| 哑客户端 | dumb client | octoscode protocol-mode posture, ch19 |
-| 终端客户端 | terminal client | octoscode role, ch19 |
-| wire 契约 | wire contract | ui_protocol.rs types, ch19 |
-| reducer | reducer | store.rs two-entry state fold, ch19 |
-| 重连退避 | reconnect backoff | exponential, transport.rs, ch19 |
-| 回滚区 | scrollback | insert_history.rs native buffer, ch19 |
-| peer 名册 | peer roster | Peer Dock liveness view, ch19 |
-| 识别契约 | detection contract | herdr manifest rules, ch19 |
-| 状态栏文案 | status-bar copy | herdr-visible text, ch19 |
-| 启动链 | startup chain | main.rs ordered steps, ch19 |
-| 能力协商 | capability negotiation | compare_protocol handshake, ch19 |
-| 重放游标 | replay cursor | event_seq monotonic, ch19 |
+| 驾驶舱 | cockpit | herdr chapter anchor, ch21 |
+| 识别契约 | detection contract | screen-text manifest, ch21 |
+| 外环三原语 | the three outer-loop primitives | discover / inject / observe, ch21 |
+| 双哨 | dual sentinels | positive ACK + negative events.jsonl watch, ch21 |
+| 双重门 | double gate | named-agent list + foreground process match, ch21 |
+| 注入静默丢失 | silent injection loss | herdr prompt failure mode, ch21 |
+| 上岗清单 | onboarding checklist | OLP outer-loop boot card, ch21 |
+| 重启硬清单 | restart hard checklist | OLP_OUTER_BOOT §0b four steps, ch21 |
+| 冒烟验证 | smoke verification | herdr agent list `octoscode \| <pane> \| idle`, ch21 |
+| 窗格 | pane | herdr terminal pane |
