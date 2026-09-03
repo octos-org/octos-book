@@ -158,7 +158,7 @@ pub trait Tool: Send + Sync {
 | crate 目录总数 | 26 | `ls crates \| wc -l`；= 23 个 `octos-*` crate + `app-skills` + `platform-skills` + `octos-web` 三个目录 |
 | Rust 总行数 | 700,915 | `find crates -name '*.rs' \| xargs wc -l \| tail -1`；仅统计 `.rs` 文件，`octos-web` 计 0 |
 | workspace 成员数 | 38 | 根 `Cargo.toml` `members` 列表长度；26 目录中 `app-skills`/`platform-skills` 是多 crate 目录（各含 14/1 个成员），23+14+1=38，`octos-web` 不是成员 |
-| 消息频道源文件 | 17 | `ls crates/octos-bus/src/crates/octos-bus/src/*_channel.rs \| wc -l` |
+| 消息频道源文件 | 17 | `ls crates/octos-bus/src/*_channel.rs \| wc -l` |
 | 工具源文件 | 59 | `ls crates/octos-agent/src/tools/*.rs \| wc -l`；是文件数不是工具数（含 `crates/octos-agent/src/tools/mod.rs`、`crates/octos-agent/src/tools/registry.rs`、测试等框架文件） |
 
 26 与 38 的关系值得单独强调：目录数 ≠ 成员数 ≠ 核心库数。`crates/app-skills/` 没有顶层 `Cargo.toml`，它是一个装着 14 个独立二进制 crate 的目录；`platform-skills/` 装 1 个（voice）；`octos-web` 连 Rust 都没有。把这四个数字混为一谈，是外部读者对 octos 结构最常见的第一重误解。
