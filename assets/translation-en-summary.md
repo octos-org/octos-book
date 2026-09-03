@@ -61,7 +61,7 @@
 
 ## 遗留（不阻塞）
 
-1. 若中文版再修订，英文版需按同一 verify-en 门重跑；脚本在 `~/.octos/outer/verify-en.sh`（未入库，建议移入 `scripts/`）。
+1. 若中文版再修订，英文版需按同一 verify-en 门重跑：`scripts/verify-en.sh <zh> <en>`（已入库，d32c15d）。
 2. `book-en/book.toml` 与 `book/book.toml` 的 `language-switcher` 依赖部署路径 `/en/`，本地 serve 用 3000/3001 端口区分。
-3. 附录 E 英文沿用 v1，措辞未经 C2 去味。
-4. 运行时缺陷同中文战役（`~/.octos/outer/runtime-defects.md`）：goal 预算耗尽后 CLI 与 TUI 账本不同源，需 TUI `/goal clear`；一次 peer 输出退化为 3 行占位（appendixf-en）需重派；master 在等待单个 peer 时会空转一整轮而不补槽。
+3. 附录 E 英文沿用 v1，已补 C2 去味（1798981，1 处修改）。
+4. 运行时缺陷同中文战役（`assets/reports/runtime-defects.md`，含上游 issue 草稿）：goal 预算耗尽后 CLI 与 TUI 账本不同源，需 TUI `/goal clear`；一次 peer 输出退化为 3 行占位（appendixf-en）需重派；master 在等待单个 peer 时会空转一整轮而不补槽。
