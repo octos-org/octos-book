@@ -87,14 +87,16 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | 实体库 | entity bank | two-level prompt injection, ch04 |
 | 写入闸 / 渲染闸 | write gate / render gate | guard.rs, ch04 |
 | 优雅降级 | graceful degradation | BM25 without embeddings, ch04 |
-| 工具结果占位符 | tool result placeholder | ToolResultPlaceholder, ch08 |
-| 分层压缩面 | tiered compaction surface | compaction_tiered.rs, ch08 |
-| 提取式摘要 | extractive summary | ExtractiveSummarizer, ch08 |
-| 保真度分级 | fidelity grades | Full/Truncate/Compact/Summary, ch08 |
-| 工作集钉住 | working-set pinning | pin_recent_files, ch08 |
-| 重物化 | rematerialization | recall tool, ch08 |
-| 预算感知读取 | budget-aware read | read_file range hint, ch08 |
-| 读去重 | read de-duplication | dedup_duplicate_reads, ch08 |
-| 上下文窗口压缩 | context compaction | ch08 umbrella term |
-| 提示层构建 | prompt layer assembly | PromptLayerBuilder, ch08 |
-| 消息注入 | steering injection | SteerBuffer, ch08 |
+| 声明式校验器 | declarative validator | ch10 pillar one, ValidatorSpec |
+| 事件 ABI | event ABI | ch10 pillar two, octos.harness.event.v1 |
+| 耐久类型 | durable type | ch10 five serialized schema_version types |
+| 版本护栏 | version guardrail | ch10 check_supported |
+| 信封 | envelope | HarnessEvent wire wrapper |
+| 本地 sink 传输 | local sink transport | OCTOS_EVENT_SINK JSONL channel |
+| 部分交付 | partial delivery | Required::Soft contracts |
+| 证据留存 | evidence retention | validator-evidence/ directory |
+| starter 脚手架 | starter scaffold | app-skills/harness-starter-* |
+| 生命周期点 | lifecycle point | HookEvent eleven mount points |
+| 会话隔离 | session isolation | hooks breaker state keys, #2153 |
+| 去抖窗口 | debounce window | after-event coalescing, hooks.rs |
+| 反馈通道 | feedback channel | hook exit 1 diagnostics into model context |
