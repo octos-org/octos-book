@@ -94,20 +94,20 @@ The fifth channel is served by the `octoscode olp-mcp-serve` subcommand (a pure 
 | Parameter | Meaning | Validation | Source lines |
 |---|---|---|---|
 | `question` | The question for the outer loop | Rejected outright if empty | same, :197-198 |
-| `context` | Where you are stuck, relevant state | No extra validation | same, :183、:336 |
-| `tried` | What you already tried on your own | Rejected if empty (anti-outsourcing of thought: try first, then ask) | same, :186-188、:32 |
+| `context` | Where you are stuck, relevant state | No extra validation | same, :183, :336 |
+| `tried` | What you already tried on your own | Rejected if empty (anti-outsourcing of thought: try first, then ask) | same, :186-188, :32 |
 
 Anti-abuse constants and behavior:
 
 | Item | Value | Behavior | Source lines |
 |---|---|---|---|
-| Timeout | 90 seconds (`ASK_TIMEOUT_SECS`) | On timeout returns a degraded directive: proceed on the blackboard's existing guidance, and if you cannot proceed, close with `ACK(blocked)` noting the inquiry id | same, :25、:30、:248-251 |
-| Quota | 3 per slice (`ASK_QUOTA_PER_SLICE`) | Beyond quota returns a refusal telling you to proceed on your own or switch to `report_blocked` | same, :27、:31、:193-195 |
+| Timeout | 90 seconds (`ASK_TIMEOUT_SECS`) | On timeout returns a degraded directive: proceed on the blackboard's existing guidance, and if you cannot proceed, close with `ACK(blocked)` noting the inquiry id | same, :25, :30, :248-251 |
+| Quota | 3 per slice (`ASK_QUOTA_PER_SLICE`) | Beyond quota returns a refusal telling you to proceed on your own or switch to `report_blocked` | same, :27, :31, :193-195 |
 | Poll interval | 0.5 seconds (`ASK_POLL_INTERVAL_SECS`) | The polling cadence for the answer file | same, :26 |
-| Mailbox | Under `~/.octos/outer/mcp/`, a questions / answers / consumed three-stage flow | Once the answer is taken, the pair is archived to consumed and the originals deleted | same, :109-111、:231-241 |
-| Audit | Written to `OUTER_LOOP_MCP.md` with the fixed signature `MCP(ask_outer)` | Full trail | same, :24、:28 |
+| Mailbox | Under `~/.octos/outer/mcp/`, a questions / answers / consumed three-stage flow | Once the answer is taken, the pair is archived to consumed and the originals deleted | same, :109-111, :231-241 |
+| Audit | Written to `OUTER_LOOP_MCP.md` with the fixed signature `MCP(ask_outer)` | Full trail | same, :24, :28 |
 
-`report_blocked` parameters: `reason` (why blocked) and `needs` (what would unblock), both required, empty reason refused; it lands on the board directly, with no mailbox round-trip (same, :255-272、:344-352).
+`report_blocked` parameters: `reason` (why blocked) and `needs` (what would unblock), both required, empty reason refused; it lands on the board directly, with no mailbox round-trip (same, :255-272, :344-352).
 
 The sub_providers lane templates (v1 ships out-of-the-box templates, pinned by the contract test `olp_lane_template_parses`; source: octoscode/docs/OUTER_LOOP_PROTOCOL.md:375-391):
 
