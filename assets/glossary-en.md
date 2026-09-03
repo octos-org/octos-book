@@ -117,10 +117,11 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | 长轮询 | long polling | Telegram/Matrix User, ch11 |
 | 百分号编码 | percent-encoding | encode_path_component, ch11 |
 | write-then-rename | write-then-rename | 整会话原子重写, ch11 |
-| keeper | keeper | server-side goal holder role, ch18 |
-| 任务契约 | brief | peer task contract file, ch18 |
-| 派生 | handoff | peer_handoff staging, ch18 |
-| 落盘顺序/暂存 | staging | stage_peer write protocol, ch18 |
-| 回流通道 | return channel | peer_findings/ledger_findings/open_escalations, ch18 |
-| 预算收尾 | wrap-up turn | GoalWrapUp, ch18 |
-| 栅栏分支 | fence branch | peer/<slug> branch in the clone, ch18 |
+| 事件发件箱 | outbox | 持久事件外发,claim/ack 协议, ch16 |
+| 对账/恢复协调 | reconcile | 启动期租约回收, ch16 |
+| 封闭注册表 | closed registry | 从空注册表按 grant 装配, ch16 |
+| 有界池 | bounded pool | FleetWorkerPool 信号量并发上限, ch16 |
+| 水位线 | watermark | since_seq, digest 已综合到的最大序号, ch16 |
+| 常开安全阀 | always-on safety valve | escalate 工具, PR B, ch16 |
+| 控制器摘要 | controller digest | digest(findings, opts), ch16 |
+| 决策日志 | decision log | decision_log 追加表, ch16 |
