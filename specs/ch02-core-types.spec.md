@@ -1,7 +1,7 @@
 spec: task
-name: "Ch2. octos-core：用类型系统定义领域语言"
+name: "Ch2. octos-core：用类型系统定义领域语言(v2 勘误)"
 inherits: project
-tags: [part1, core, types, domain-modeling]
+tags: [part1, core, types, domain-modeling, rewrite-v2]
 depends: [ch01-why-rust-why-agent-os]
 estimate: 1d
 ---
@@ -19,6 +19,10 @@ Task 状态机、Message 抽象、Error 设计是整个 octos 的基石，所有
 
 - 源码目录: `crates/octos-core/src/`
 - 重点文件: `task.rs`, `message.rs`, `error.rs`, `types.rs`, `utils.rs`, `ui_protocol.rs`
+- 新增文件归类(2026-09-02 main 共 15 个源文件): `abort.rs`, `app_ui.rs`, `app_ui_codec.rs`, `env_hygiene.rs`, `gateway.rs`, `git_worktree.rs`, `session_scope.rs` 需在「core 的边界」小节各用 1-3 句说明它们为何进 core,不展开实现
+- 结构化截断: `d8125d18`(2026-08-31)后 `truncate_head_tail` 是 `truncate_head_tail_report` 的薄包装,返回 `TruncationReport { content, truncated, truncated_by, total_bytes, output_bytes, omitted_bytes, ... }`,2.5.3 小节按此改写
+- 勘误方式: 保留章节结构与叙事,只改失实处与补新面;所有 `crates/octos-core/src/*.rs:行号` 引用逐条对照当前源码重标行号
+- 零内部依赖事实: `crates/octos-core/Cargo.toml` [dependencies] 当前只有 serde/serde_json/chrono/uuid/eyre/tracing/sha2,侧栏据此复核
 - 图表: Task 状态机 Mermaid 状态图、message identity 三元组图、SessionSummary ABI 图
 - 工程决策侧栏: 为什么 core crate 零内部依赖
 
@@ -90,6 +94,26 @@ Task 状态机、Message 抽象、Error 设计是整个 octos 的基石，所有
   当 阅读 `truncate_utf8` 小节
   那么 解释了 UTF-8 多字节字符在截断时的陷阱
   并且 展示了 octos 的两个变体（in-place 和 copying）的实现差异
+
+场景: 结构化截断报告已更新
+  测试: review_ch02_truncation_report
+  当 阅读 truncate_head_tail 小节
+  那么 说明 `truncate_head_tail_report` 返回 `TruncationReport` 及其字段含义
+  并且 说明 `truncate_head_tail` 是保持字节一致的薄包装
+  并且 引用的行号与当前 `crates/octos-core/src/utils.rs` 一致
+
+场景: core 新增文件有归类
+  测试: review_ch02_new_files_mapped
+  当 阅读「core 的边界」小节
+  那么 `abort.rs`、`app_ui.rs`、`app_ui_codec.rs`、`env_hygiene.rs`、`gateway.rs`、`git_worktree.rs`、`session_scope.rs` 各有一句话定位
+  并且 每句定位能在该文件顶部文档注释或主要类型名中找到依据
+
+场景: 引用零失效
+  测试: review_ch02_refs_valid
+  当 提取正文全部 `crates/octos-core/src/*.rs:行号` 引用并对照当前源码
+  那么 每个路径存在
+  并且 每个行号区间不超过文件总行数
+  并且 区间内确实含所述符号
 
 场景: 零依赖设计哲学
   测试: review_ch02_zero_dep_sidebar

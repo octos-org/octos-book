@@ -1,5 +1,5 @@
 spec: task
-name: "Ch9. 扩展机制：Skills、Plugins 与 MCP"
+name: "Ch9. 扩展机制：Skills、Plugins 与 MCP(v2 段落重写)"
 inherits: project
 tags: [part2, skills, plugins, mcp, extension]
 depends: [ch06-tool-system]
@@ -19,7 +19,11 @@ skills，本章需要把这些写成扩展开发者真正需要遵守的契约�
 
 - 源码文件: `../octos/crates/octos-agent/src/skills.rs`、`../octos/crates/octos-agent/src/plugins/manifest.rs`、`../octos/crates/octos-agent/src/plugins/loader.rs`、`../octos/crates/octos-agent/src/plugins/tool.rs`、`../octos/crates/octos-agent/src/plugins/extras.rs`、`../octos/crates/octos-agent/src/mcp.rs`、`../octos/crates/octos-agent/src/abi_schema.rs`、`../octos/crates/octos-agent/src/harness_events.rs`、`../octos/crates/octos-agent/src/validators.rs`、`../octos/crates/app-skills/harness-starter-*`
 - 图表: Plugin 二进制协议时序图、三种扩展机制对比侧栏、Harness event sink side-channel、Validator runner safety path、Starter skill engineering checklist
-- Harness 定位: ABI `schema_version` 是 runtime payload 兼容性边界，不等同于 plugin manifest version
+- Harness 定位: ABI `schema_version` 是 runtime payload 兼容性边界，不等同于 plugin manifest version;v2 起 harness 独立成第 10 章,本章 9.4 压缩为一段「详见第 10 章」,不再展开 validators / harness_events / abi_schema
+- 新面三处必补: ① `65486dad` MCP 客户端整体迁到 rmcp SDK(stdio + streamable-HTTP + OAuth 2.1,`mcp.rs`、新增 `mcp_auth.rs`;`Cargo.toml` rmcp 1.8),旧稿「双传输」描述作废;② `9b1fc38f` skill layering v1(配置列举 + per-profile 继承,`skills.rs`、`plugins/loader.rs`);③ `3934aeb6` registry 持有 MCP 传输(`mcp.rs`、`tools/registry.rs`)
+- 配置车道两条: `mcp_servers`(`crates/octos-agent/src/mcp.rs:53` `McpServerConfig`)与 `sub_providers`(`crates/octos-cli/src/config.rs:618` `SubProviderConfig`,保留键 `goal_verifier` 见 `crates/octos-cli/src/runtime/profile.rs`)各一小节,附录 C 只放字段表
+- 勘误方式: 保留 9.1-9.3 结构,9.3 按 rmcp 重写,9.4 缩为交叉引用,新增 9.5「配置车道」;所有引用行号逐条重标
+- 分析基线: octos main @ 9c157101;镜像同步 `book/src/part2/ch09.md`
 
 ## 边界
 
@@ -155,3 +159,33 @@ skills，本章需要把这些写成扩展开发者真正需要遵守的契约�
   并且 说明 starter 展示 manifest tool definition、concurrency_class、workspace artifact binding、validator 和 lifecycle smoke test
   并且 以 harness-starter-audio 的 `concurrency_class = "exclusive"` 和 `file_size_min:$primary_audio:4096` 作为具体例子
   并且 以 harness-starter-report 的 `reports/*.md` artifact contract 作为具体例子
+
+场景: MCP 小节对齐 rmcp
+  测试: review_ch09_rmcp
+  当 阅读 MCP 集成小节
+  那么 传输面写为 stdio + streamable-HTTP + OAuth 2.1 并引用 `mcp.rs`、`mcp_auth.rs` 行号
+  并且 不再出现旧「双传输」描述
+  并且 注明 65486dad 与 3934aeb6
+
+场景: skill layering 写明
+  测试: review_ch09_skill_layering
+  当 阅读 Skills 轨道小节
+  那么 配置列举与 per-profile 继承的规则引用 `skills.rs` 与 `plugins/loader.rs` 实际行号并注明 9b1fc38f
+
+场景: 配置车道小节齐全
+  测试: review_ch09_config_lanes
+  当 阅读配置车道小节
+  那么 `mcp_servers` 与 `sub_providers` 各有字段来源引用与一个最小配置示例
+  并且 `goal_verifier` 保留键的用途写明
+
+场景: harness 已交叉引用
+  测试: review_ch09_harness_xref
+  当 检查 9.4
+  那么 仅含「详见第 10 章」的一段,不含 validators / harness_events / abi_schema 的展开
+
+场景: 引用零失效
+  测试: review_ch09_refs_valid
+  当 提取正文全部 `crates/...rs:行号` 引用并对照当前源码
+  那么 每个路径存在
+  并且 每个行号区间不超过文件总行数
+  并且 区间内确实含所述符号

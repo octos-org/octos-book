@@ -19,6 +19,7 @@ tags: [book, architecture, rust, ai-agent]
 - 中文为主，类型名、trait 名、crate 名、CLI 命令保留英文
 - 不编造源码中不存在的实现细节，必须基于实际代码
 - 每章结尾提供「延伸阅读」和「思考题」
+- 写作流程遵守 AGENTS.md「写作纪律」(tech-writer 书籍模式 + trilingual-collab 中文规范):预检、预算声明、定位锚点、版本演化说明、三视角审查、去味润色
 
 ## 决策
 
@@ -76,3 +77,27 @@ tags: [book, architecture, rust, ai-agent]
   当 对照 octos 仓库检查引用的代码片段
   那么 代码片段来自实际源码而非编造
   并且 文件路径和行号范围可以在仓库中找到
+
+场景: 写作纪律锚点齐全
+  测试: review_project_writing_discipline
+  假设 任意一个已完成或勘误后的章节
+  当 检查章首与章末
+  那么 章首含 `> **定位**` 引用块
+  并且 章末含「版本演化说明」并写明分析基线 commit
+  并且 至少含 1 个 mermaid 代码块
+
+场景: 去味润色通过
+  测试: review_project_deslop_zh
+  假设 任意一个已完成或勘误后的章节
+  当 按 .octos/skills/trilingual-collab-zh.md 检查正文
+  那么 破折号「——」全篇不超过 2 处
+  并且 不出现「值得注意的是」「众所周知」「综上所述」「总而言之」「赋能」「抓手」「闭环」「沉淀」「助力」
+  并且 不出现自问自答式过渡句
+
+场景: mdbook 可构建且镜像同步
+  测试: review_project_mdbook_build
+  假设 任意一章交付后
+  当 在 book/ 目录运行 `mdbook build`
+  那么 构建成功且无 ERROR
+  并且 `chapters/chNN-*.md` 与 `book/src/partN/chNN.md` 内容一致
+  并且 新增或重编号的章节在 `book/src/SUMMARY.md` 中有对应条目

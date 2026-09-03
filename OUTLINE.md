@@ -11,8 +11,9 @@
 
 ## 代码规模
 
-- 10 个 crate，约 13 万行 Rust
-- 14 个消息频道，91 个 REST 端点，14+ 内置工具
+- 26 个 crate，约 70 万行 Rust（octos main @ 9c157101，2026-09-02）
+- 17 个消息频道，约 50 个内置工具，OctoLoop 双环协议 olp/v2
+- 数字口径与复核命令见 GAP_ANALYSIS_2026-09-02.md §6
 
 ---
 
@@ -22,7 +23,7 @@
 
 - 问题空间：多租户 AI Agent 平台面临的核心挑战（安全隔离、并发、性能）
 - 语言选型：为什么不用 Python/Go — 性能、安全、类型系统的取舍
-- Workspace 策略：10 个 crate 的分层拓扑与职责边界
+- Workspace 策略：26 个 crate 的分层拓扑与职责边界（分层由 Cargo 依赖方向推导，事实表 assets/ch01-facts.md）
 - **工程决策侧栏**：mono-repo vs multi-repo，为什么选择 workspace
 
 ### Ch2. octos-core：用类型系统定义领域语言
@@ -214,3 +215,39 @@
 - 代码引用标注文件路径和行号，方便读者对照源码
 - 架构图 / 数据流图 / 状态机图用 Mermaid 格式
 - 中文为主，类型名、trait 名、crate 名、CLI 命令保留英文
+
+---
+
+## v2 重写计划（2026-09-02 立项，依据 GAP_ANALYSIS_2026-09-02.md）
+
+书稿最后修改 2026-05-29，之后 octos 主干 873 提交、10→26 crate。本轮按下表重写；
+新增章节编号以本表为准，旧文件在对应章重写时改名。
+
+| 章 | 处置 | 定位 |
+|---|---|---|
+| Ch1 | 重写 | 26 crate 拓扑与规模基准 |
+| Ch2 | 保留+勘误 | 补 ui_protocol.rs、结构化截断 |
+| Ch3 | 段落重写 | 补 cache 经济学、sampler、per-profile 上下文 |
+| Ch4 | 保留+勘误 | 补 BM25 top-k 分区、reindex |
+| Ch5 | 重写 | 按 agent/ 目录重组，补预算检查点与续跑钩子 |
+| Ch6 | 重写 | 删 activate_tools 一节，按能力域分组 |
+| Ch7 | 重写 | 补 fail-closed 沙箱模式与 WorkerGrant |
+| Ch8 | 段落重写 | 补 recall 工具与分层压缩 |
+| Ch9 | 段落重写 | 补 rmcp 迁移、skill layering、mcp_servers/sub_providers |
+| Ch10 新 | 新增 | Harness：校验器 / 事件 ABI / schema 版本化 |
+| Ch11 | 保留+勘误 | 原 Ch10 octos-bus，17 频道 |
+| Ch12 | 重写 | 原 Ch11 并发：Tokio / supervisor / peer / lease 三层调度 |
+| Ch13 | 段落重写 | 原 Ch12 pipeline，12 种 IR 节点 |
+| Ch14 | 重写 | 原 Ch13 运行模式，含 stdio/solo |
+| Ch15 | 重写 | 原 Ch14 生产化，octos-store / octos-services |
+| Ch16 新 | 新增 | Fleet：可恢复的计划执行内核 |
+| Ch17 新 | 新增 | Swarm：契约扇出与聚合门禁 |
+| Ch18 新 | 新增 | Goal 与 Peer：把目标从上下文里搬出来 |
+| **第四部分：双环** | 新增 | 外环驱动内环 |
+| Ch19 新 | 新增 | octoscode：终端客户端与 UI Protocol |
+| Ch20 新 | 新增 | OctoLoop：外环协议 OLP v2 |
+| Ch21 新 | 新增 | herdr 与外环运维实务 |
+| 附录 A-D | 重画/重写/勘误 | 26 crate 图、约 50 工具、mcp_servers/sub_providers/validators、新 flag |
+| 附录 F 新 | 新增 | OLP v2 协议速查 |
+
+依赖顺序：Ch1 → Ch2 → Ch5 → Ch6/Ch7 → Ch10 → Ch12 → Ch16/Ch17 → Ch18 → Ch19 → Ch20 → Ch21；附录在对应章定稿后回填。

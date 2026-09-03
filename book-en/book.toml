@@ -1,7 +1,6 @@
 [book]
 authors = ["Zhang Alex"]
 language = "en"
-multilingual = false
 src = "src"
 title = "Building an AI Agent OS: Architecture and Implementation of octos"
 description = "A DDIA-style deep dive into the octos AI Agent operating system"

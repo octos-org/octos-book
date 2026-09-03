@@ -1,334 +1,385 @@
 # 第 1 章：为什么是 Rust？为什么是 Agent OS？
 
-> **定位**：本章是全书开篇，回答一个根本问题——为什么要用 Rust 构建多租户 AI Agent 平台？前置依赖：无。适用场景：任何想理解 octos 项目存在理由的读者，无论你是 Rust 初学者（读者 A）、资深 Rust 开发者（读者 B）、还是来自 Python/Go 生态的 AI 应用开发者（读者 C）。
+> **定位**：本章是全书开篇，回答两个根本问题：多租户 AI Agent 平台究竟难在哪里？为什么 octos 用 Rust 写、又为什么长成今天这个 26 个 crate 的形状？前置依赖：无。适合全部四类读者：**A**（Rust 初学者）能借此建立「Rust 在真实大型系统里解决什么问题」的直观图景；**B**（资深 Rust 开发者）可以直接跳到 1.3 节看 workspace 分层与依赖拓扑；**C**（AI/LLM 应用开发者，不要求 Rust 背景）重点读 1.1 的问题空间，即使最终选择 Python，这三大挑战也绕不过去；**D**（贡献者）请特别留意 1.3.3 的三处事实澄清，它们是读懂仓库结构的前提。
 
-当你第一次打开 octos 的代码仓库，看到 26 万多行 Rust 源文件、400+ 个 Rust 文件，以及一个由 11 个 octos-* 核心 crate、14 个 app skill、1 个 platform skill 组成的 Cargo workspace，心中难免浮现一个问题：为什么不用 Python？LangChain 和 AutoGen 不是已经很成熟了吗？为什么不用 Go？它的并发模型不是更简单吗？
+当你第一次打开 octos 的源码仓库，`ls crates | wc -l` 会给出 26；`find crates -name '*.rs' | xargs wc -l | tail -1` 会给出 700,915 行 Rust；根 `Cargo.toml` 的 `members` 列表有 38 个成员。这里躺着一个消息总线（17 个频道源文件）、一个 Agent 运行时（`crates/octos-agent/src/tools/` 下 59 个工具源文件）、一个 DOT 驱动的流水线引擎、一个 Fleet 计划执行内核，以及供 Python/Swift/Kotlin/浏览器/Node 嵌入的整条绑定链。看到这些，从 LangChain 或 AutoGen 过来的开发者第一反应是质疑语言选型；看到满屏的 `tokio::spawn` 与 `Arc<Mutex<_>>`，Go 开发者则会怀疑 goroutine 是不是更省事。
 
-这不是一个关于语言偏好的问题。当你把「AI Agent」从单用户玩具推向多租户生产平台时，你面对的是一组相互纠缠的工程约束：安全隔离、并发控制、性能预算。这三个约束中的任何一个都不难单独解决，但当它们同时出现在一个系统中时，语言选型就不再是品味问题，而是架构决策。
-
-本章将从问题空间出发，解释这三大挑战为什么如此棘手，然后论证 Rust 为什么是目前最适合应对这组约束的语言，最后展开 octos 的 workspace 拓扑，为后续 13 章建立全局地图。
+这不是语言品味之争。当你把「AI Agent」从单用户玩具推向多租户生产平台，你面对的是一组相互纠缠的工程约束——**安全隔离、并发、性能**。任何一条单独看都不难，三条同时成立时，语言与工程组织的选型就从偏好问题变成了架构决策。本章先讲清楚这三大挑战（1.1），再论证为什么 Rust 是当前对这组约束最合适的答案（1.2），然后展开 octos 的 workspace 拓扑，为后续 20 章建立全局地图（1.3）。本章所有规模数字都标注了统计口径，均可按第 1.3.1 节给出的命令在源码仓库逐条复现。
 
 ---
 
 ## 1.1 问题空间：多租户 AI Agent 平台的三大挑战
 
-要理解 octos 的设计决策，首先要理解它试图解决的问题。octos 不是一个 chatbot 框架——它是一个多租户 AI Agent 操作系统，需要同时为多个用户、多个 Agent 实例提供服务，每个 Agent 都可以调用文件系统操作、Shell 命令、网络请求等具有副作用的工具。
+octos 不是 chatbot 框架，而是一个多租户 AI Agent 操作系统：同一份进程要为多个用户、多个 Agent 实例服务，而每个 Agent 都能调用带副作用的工具：执行 Shell、读写文件、发起网络请求、再派生子 Agent。三大挑战正是从这里生长出来的。
 
-### 1.1.1 挑战一：安全隔离
+### 1.1.1 挑战一：安全隔离，59 个工具源文件就是 59 个攻击面入口
 
-想象一个场景：租户 A 的 Agent 被 prompt 注入攻击，恶意指令试图读取租户 B 的会话历史，或者执行 `rm -rf /` 来破坏宿主机。在多租户环境中，这不是理论风险，而是日常威胁。
+设想一个真实场景：租户 A 的 Agent 在总结一篇网页时被 prompt 注入，恶意指令试图读取租户 B 的会话历史，或者执行 `rm -rf /`。在多租户环境里这不是理论风险。octos 的攻击面可以从事实表直接量化：`crates/octos-agent/src/tools/` 下有 59 个工具源文件（口径：`ls crates/octos-agent/src/tools/*.rs | wc -l`）。注意这是源文件数，不是工具数，其中包含 `crates/octos-agent/src/tools/mod.rs`、`crates/octos-agent/src/tools/registry.rs`、`crates/octos-agent/src/prompt_guard.rs` 这类框架文件。
 
-AI Agent 的安全隔离比传统 Web 服务更复杂，原因有三：
+每个真正暴露给 LLM 的工具（`shell`、`browser`、`web_fetch`、`write_file`、`spawn` 等）都是一条独立的攻击路径。再加上 `crates/octos-bus/src/` 下的 **17 个 `*crates/octos-bus/src/cli_channel.rs` 频道源文件**（Telegram、Discord、Slack、WhatsApp、飞书、邮件、Matrix、企业微信、钉钉、QQ Bot、Twilio、Line 等；其中 `crates/octos-bus/src/api_channel.rs` 与 `crates/octos-bus/src/cli_channel.rs` 是两个内部通道，并非全部对外），平台在物理上就是「一张接满了外部消息网络的、能执行代码的图」。每接入一个频道，就多一个入站消息的信任边界；每注册一个工具，就多一个出站副作用的通道。
 
-1. **工具调用是 Agent 的核心能力**。Agent 不只是生成文本——它执行 Shell 命令、读写文件、发起网络请求。每一次工具调用都是一个潜在的攻击面。octos 的默认工具注册表至少包含 Shell/File/Web/Browser 等内置工具；启用 `git` / `ast` feature，或进入 Gateway/Serve 运行时后，还会再注册记忆、模型切换、研究与管理类工具（`../octos/crates/octos-agent/src/tools/registry.rs`; `../octos/crates/octos-cli/src/commands/gateway/gateway_runtime.rs`）。每一类工具都需要独立的安全策略。
+Agent 场景的安全隔离比传统 Web 服务难，原因有三：
 
-2. **Prompt 注入是新型攻击向量**。与传统 SQL 注入不同，prompt 注入发生在自然语言层面，更难用正则表达式或 WAF 规则拦截。攻击者可以在看似无害的文档中嵌入指令，诱导 Agent 执行越权操作。
+1. 工具调用是核心能力而非旁路。Web 服务的危险操作通常收敛到少数几个 handler；Agent 的每一次循环迭代都可能触发任意工具组合，且调用序列由 LLM 生成、不可预先枚举。防御必须下沉到「每次调用」的粒度，octos 因此在工具层实现了 deny-wins 的策略引擎与审批流（详见第 6、7 章）。
+2. Prompt 注入是新型攻击向量。它发生在自然语言层面，WAF 式的正则规则基本失效。攻击载荷可以藏在一篇被 `web_fetch` 抓回来的文档里，再借工具调用落地为文件写入或命令执行。
+3. 隔离边界必须是进程级的。语言层的权限检查只能挡「合法 API 的滥用」，挡不住 Shell 命令本身。octos 把真正的沙箱子系统放在 `octos-agent` 内部的 `crates/octos-agent/src/sandbox/`（六个文件：`crates/octos-agent/src/sandbox/bwrap.rs`、`crates/octos-agent/src/sandbox/docker.rs`、`crates/octos-agent/src/sandbox/landlock.rs`、`crates/octos-agent/src/sandbox/macos.rs`、`crates/octos-agent/src/sandbox/windows.rs`、`crates/octos-agent/src/sandbox/mod.rs`），分别对接 Linux 的 bubblewrap/Landlock、Docker、macOS 的 sandbox-exec 与 Windows 的 AppContainer（`crates/octos-agent/src/sandbox/mod.rs:1-23`）。第 7 章会逐个拆解。
 
-3. **隔离粒度需要精细控制**。不同租户需要不同的权限边界：有的允许访问 Git 仓库，有的只允许只读文件操作，有的需要完全的沙箱隔离。一刀切的隔离策略要么太松（安全风险），要么太紧（功能受限）。
+这三层防御（语言内存安全 → 工具策略 → 进程沙箱）能成立的前提，是承载它们的运行时本身不引入新的内存安全漏洞。这正是 1.2 节语言选型的第一个约束。
 
-octos 的应对策略是纵深防御——从 Rust 语言层面消除内存安全漏洞，到 Linux bwrap / macOS sandbox-exec / Docker 三后端沙箱提供进程级隔离，再到工具级别的 deny-wins 策略引擎实现细粒度权限控制，构建了多层安全屏障（详见第 7 章）。
+### 1.1.2 挑战二：并发，同一进程里的三重并发面
 
-举一个具体例子：当 Agent 执行 Shell 命令时，octos 的 `ShellTool` 会先通过 `SafePolicy` 检查命令是否在危险命令黑名单中（如 `rm -rf /`、`dd`、`mkfs`、fork bomb 等），然后将命令提交到沙箱环境中执行。即使 prompt 注入成功诱导 LLM 生成了恶意命令，这两道防线仍然可以拦截。而沙箱本身的实现依赖 Rust 的类型系统确保资源句柄不会泄漏——文件描述符在 `Drop` 时自动关闭，不会出现 C/C++ 中常见的资源泄漏问题。
-
-### 1.1.2 挑战二：并发控制
-
-一个生产级 Agent 平台需要同时处理大量并发请求。考虑以下场景：
-
-- 10 个用户同时与各自的 Agent 对话
-- 每个 Agent 在一次迭代中可能并行调用 3-5 个工具
-- 每个工具调用可能涉及异步 HTTP 请求、文件 I/O、子进程管理
-- 后台还有 Cron 任务和 Heartbeat 定时触发新的 Agent 会话
-
-这意味着系统中可能同时存在数百个异步任务。并发本身不是问题——问题是并发中的正确性：
-
-- **会话级串行化**：同一个用户的消息必须按序处理，不能出现两条消息同时修改同一个会话状态的情况。Serve/API 路径把会话状态收敛到受 `Arc<tokio::sync::Mutex<_>>` 保护的共享管理器中，确保读写不会并发踩踏（`../octos/crates/octos-cli/src/commands/serve.rs`）。
-- **工具级并行**：在单次 Agent 迭代内，多个不相关的工具调用应该并行执行以减少延迟。当前实现把工具任务句柄交给 `futures::future::join_all` 聚合，并在超时层外包一层 `tokio::time::timeout`（`../octos/crates/octos-agent/src/agent/execution.rs`）。
-- **资源限流**：无限制的并发会耗尽系统资源。octos 通过 `tokio::sync::Semaphore` 限制最大并发会话数；默认值定义在配置层，Gateway 启动时再把它实例化成并发信号量（`../octos/crates/octos-cli/src/config.rs`; `../octos/crates/octos-cli/src/commands/gateway/gateway_runtime.rs`）。
-- **优雅关停**：当收到 SIGTERM/CTRL-C 时，不能粗暴地杀死正在进行的 Agent 对话。octos 使用 `AtomicBool` 标志位实现优雅关停：Gateway 在信号处理路径上写入 shutdown flag，Agent Loop 在预算检查和流式消费路径上读取这个标志，让进行中的对话自然结束（`../octos/crates/octos-cli/src/commands/gateway/gateway_runtime.rs`; `../octos/crates/octos-agent/src/agent/budget.rs`; `../octos/crates/octos-agent/src/agent/streaming.rs`）。
-
-Python 虽然可以通过 `multiprocessing` 或 `concurrent.futures.ProcessPoolExecutor` 实现 CPU 并行，但进程间通信的序列化开销使其不适合上述细粒度共享状态的并发模式。Go 的 goroutine 模型可以实现这些模式，但数据竞争只能通过 `-race` 运行时检测发现——尽管 Go 的 race detector 基于 happens-before 算法，在实际测试中相当有效，但它本质上依赖测试覆盖率，无法提供编译期的完备性保证。Rust 的 `Send`/`Sync` trait 则在编译期消除了整类数据竞争（详见第 11 章）。
-
-### 1.1.3 挑战三：性能预算
-
-AI Agent 的主要延迟瓶颈是 LLM API 调用（通常 1-10 秒），这让很多人认为 Agent 框架的性能无关紧要。这是一个危险的误解。
-
-**首先，延迟是累积的。** 一次 Agent 执行可能包含多达 50 次迭代（octos 的默认上限），每次迭代涉及消息构建、工具调用、上下文压缩。如果框架层面每次迭代增加 50ms 开销，50 次迭代就是 2.5 秒——对于流式交互场景，这是用户可感知的延迟。
-
-**其次，内存是多租户的硬约束。** 每个 Agent 会话需要维护对话历史、工具状态、上下文窗口。如果每个会话占用 100MB 内存（Python 应用中并不罕见），10 个并发会话就是 1GB，100 个就是 10GB。octos 的核心数据结构设计注重零拷贝和最小分配——例如 `truncate_utf8` 函数（`../octos/crates/octos-core/src/utils.rs`）通过 UTF-8 字符边界检测实现安全截断，避免不必要的字符串复制。
-
-**最后，上游 SSE 流式解析需要持续的 CPU 效率。** LLM Provider 的流式响应以 Server-Sent Events（SSE）格式传输，框架需要在 token 到达的毫秒级时间内完成解析，并把它投递成 Agent 内部进度事件。在多租户场景下，平台可能同时维护数十条上游 Provider 流，每条流持续数十秒。如果解析器每次事件都触发堆分配，高并发下的分配压力会导致延迟尖刺。
-
-octos-llm 的有状态 SSE 解析器（`../octos/crates/octos-llm/src/sse.rs:5-72`）设置了 1MB 缓冲上限，采用增量解析策略——数据追加到字节缓冲区中，在完整事件边界处再做 UTF-8 转换。这种设计避免了 GC 语言中常见的"解析触发 GC、GC 阻塞所有连接"的级联效应，也避免中文等多字节字符被 chunk 边界切坏。
-
-**一个容易被忽视的成本：上下文压缩。** 当对话历史接近 LLM 的上下文窗口限制时（通常 128K-200K tokens），octos 需要执行上下文压缩（Context Compaction）——将旧消息摘要化以腾出空间（详见第 8 章）。这个操作涉及大量字符串处理和 token 计数，在 GC 语言中容易产生大量临时对象和 GC 压力。octos 通过 `truncate_utf8`（`../octos/crates/octos-core/src/utils.rs`）等 UTF-8 安全工具函数，以及工具注册表里的 JSON size 估算路径（`../octos/crates/octos-agent/src/tools/registry.rs`），将这些热路径的内存开销降到最低。
-
----
-
-## 1.2 语言选型：为什么是 Rust
-
-理解了问题空间之后，我们可以在三个维度上比较候选语言：安全性、并发模型、运行时性能。
-
-### 1.2.1 安全性维度
-
-| 特性 | Python | Go | Rust |
-|------|--------|----|------|
-| 内存安全 | GC 保证，但 C 扩展不受保护 | GC 保证 | 所有权系统编译期保证 |
-| 类型安全 | 动态类型，运行时错误 | 静态类型，但 `any` 绕过编译检查 | 强静态类型 + 枚举穷举匹配 |
-| unsafe 控制 | 无此概念 | `unsafe` 包，但无编译器约束 | `unsafe` 块 + workspace 级 `deny(unsafe_code)` |
-| 依赖安全 | PyPI 无签名验证 | go.sum 校验 | Cargo 校验 + `cargo-audit` |
-
-octos 在 workspace 根 `Cargo.toml` 中设置了 `unsafe_code = "deny"`（`../octos/Cargo.toml` 的 `[workspace.lints.rust]`），这意味着整个 workspace 的核心 crate 和 skill 程序都继承同一个安全基线。这不是一个 lint 建议，而是一个编译期硬约束。任何包含 `unsafe` 块的代码都无法通过 `cargo build`。
-
-对于一个需要执行 Shell 命令、读写文件系统的 Agent 平台，这个约束的意义在于：所有与操作系统的交互都通过标准库的安全抽象完成，消除了缓冲区溢出、use-after-free 等内存安全漏洞的可能性。
-
-相比之下，Python 的 AI 框架大量使用 C 扩展（numpy、tokenizers 等），这些 C 代码不受 Python GC 保护。Go 虽然有内存安全保证，但 `unsafe` 包的使用没有编译器级别的全局禁止机制。
-
-### 1.2.2 并发模型维度
-
-| 特性 | Python | Go | Rust (Tokio) |
-|------|--------|----|--------------|
-| 并发原语 | asyncio（单线程事件循环） | goroutine + channel | async/await + Tokio 多线程运行时 |
-| CPU 并行 | GIL 限制，需多进程 | 原生支持 | 原生支持 |
-| 数据竞争检测 | 无 | `-race` 运行时检测 | `Send`/`Sync` 编译期保证 |
-| 结构化并发 | 有限（`TaskGroup`） | 无内置支持 | `tokio::select!` + `JoinSet` |
-
-Rust 的核心优势在于 `Send` 和 `Sync` trait 提供的编译期线程安全保证。考虑 octos 中的一个典型场景：Agent 配置（`AgentConfig`）需要在多个异步任务间共享。在 Go 中，你可能会用一个普通指针传递配置，直到某天在高并发下触发数据竞争。Go 的 race detector 虽然基于成熟的 happens-before 算法，能有效检测实际执行路径上的竞争，但它本质上是运行时工具——只有被测试覆盖到的代码路径才能被检测。
-
-在 Rust 中，如果你试图在线程间共享一个非 `Send` 类型，编译器会直接拒绝：
+第二个挑战同样可以量化。Gateway 模式下，17 个频道的入站消息同时到达；octos 用一个 `tokio::sync::Semaphore` 把并发会话数压在配置上限内（默认 10，`crates/octos-cli/src/config.rs:1633-1635`），信号量在 Gateway 启动时创建（`crates/octos-cli/src/commands/gateway/gateway_runtime.rs:1731-1732`）：
 
 ```rust
-// 示意代码——Rc 不是 Send，这段无法编译
-let config = Rc::new(AgentConfig::default());
-tokio::spawn(async move {
-    let _ = config.max_iterations; // 编译错误：Rc<AgentConfig> cannot be sent between threads safely
-});
-
-// octos 的实际做法：使用 Arc 实现线程安全共享
-let config = Arc::new(AgentConfig::default());
-tokio::spawn(async move {
-    let _ = config.max_iterations; // 编译通过：Arc<AgentConfig> 是 Send + Sync
-});
+// Semaphore to bound concurrent session processing
+let concurrency_semaphore = Arc::new(Semaphore::new(gw_config.max_concurrent_sessions));
 ```
 
-这意味着整类并发 bug（数据竞争、use-after-free across threads）在 octos 中被编译器彻底消除，而不是依赖测试覆盖率和运行时检测。
+但「限流」只是并发的第一重。第二重在 Agent 循环内部：单次迭代里 LLM 可能一次下发多个工具调用，octos 把每个调用 `tokio::spawn` 成独立任务再 `join_all` 聚合、保持调用顺序（`crates/octos-agent/src/agent/execution.rs:598` 的 `spawn_tool_task` 与 `:2483` 的 `execute_tools`）。第三重在进程外：后台 Cron/Heartbeat 定时唤醒会话、子 Agent 同步阻塞或后台异步双模式、fleet worker 独立进程消费任务，它们共享同一套会话状态与消息总线。
 
-### 1.2.3 性能维度
+并发本身不是问题，并发中的正确性才是：
 
-| 指标 | Python | Go | Rust |
-|------|--------|----|------|
-| 启动时间 | 200-500ms（导入开销）| 10-50ms | 5-20ms |
-| 内存占用（典型 Agent 进程）| 50-150MB | 15-30MB | 5-15MB |
-| GC 停顿 | 可预测但频繁 | 亚毫秒级（Go 1.19+） | 无 GC |
+- 会话级串行化：同一会话的两条消息不能并发改写状态，需要 per-session 锁序；
+- 工具级并行：同一批次内互不依赖的工具必须并行，否则延迟线性叠加；
+- 优雅关停：收到 SIGTERM 时不能腰斩进行中的对话，octos 用 `AtomicBool` 标志位贯穿信号处理与循环预算检查；
+- 无共享不误会：派生出的任务（spawned task）不允许借用栈上状态，一切跨 `.await` 与跨任务的数据都必须显式所有权转移或 `Arc`。
 
-*以上数据为典型 AI Agent 场景下的量级估计，具体数值因实现、负载和硬件而异。Python 内存占用包含常见依赖（requests、json 等）的开销。*
+这四条里任何一条写错，症状都不是「崩溃」而是「偶发的、无法复现的数据错乱」。在生产多租户平台上，这是最贵的一类故障。
 
-对于 AI Agent 平台，最关键的性能指标不是峰值吞吐量，而是**尾延迟（P99 latency）**。Go 自 1.19 版本以来，GC 停顿已优化到亚毫秒级（通常 < 100 微秒），对大多数场景已经足够好。但在多租户高并发场景下——数十个 Agent 同时解析上游 Provider SSE、投递 token 和工具进度事件——即使亚毫秒级的 GC 停顿也会在 P99 尾延迟中累积放大。Rust 没有 GC，内存分配和释放完全确定性，这让 octos 在极端场景下的尾延迟保持稳定和可预测。
+### 1.1.3 挑战三：性能，LLM 慢不代表框架可以慢
 
-从内存效率的角度看，无 GC 意味着没有堆碎片化问题，也不需要预留 2-3 倍的堆空间给 GC 使用。对于需要同时维护大量会话状态的多租户系统，这直接影响单机可承载的并发会话数。
+「LLM 调用都要几秒钟，框架性能无所谓」是 Agent 工程里最流行的误解。它错在三个地方：
 
-### 1.2.4 选型的代价
+第一，延迟是乘性的。 一次 Agent 执行可能跑几十次迭代，每次迭代都有消息构建、上下文压缩、工具调度。框架层每迭代多 50ms，几十次迭代就是肉眼可见的卡顿。在流式场景里，这直接决定「打字机手感」的成败。
 
-公平地说，选择 Rust 也有明确的代价：
+第二，内存是多租户的硬约束。 每个会话都持有对话历史、工具状态与上下文窗口。运行时本身每会话的开销乘上并发会话数，就是必须提前规划的容量：解释型运行时的每会话基线开销通常显著高于编译型，具体差多少要按目标并发数实测容量，100 个并发会话时这笔差值直接决定还能不能再挤进一个容器。
 
-- **学习曲线**：所有权和生命周期是 Rust 独有的概念，新开发者需要 2-4 周适应期。这不仅是语法问题——理解何时使用 `&`、`&mut`、`Box`、`Rc`、`Arc` 需要建立新的心智模型。
-- **异步编程复杂度**：Rust 的 async/await 与所有权系统的交互产生了独特的复杂度。`Pin<Box<dyn Future>>`、async trait 中的生命周期标注、跨 `.await` 点持有引用的限制，这些在 Python 和 Go 的异步模型中不存在。octos 大量使用 `async-trait` crate 和 `Arc` 共享来绕过这些限制。
-- **编译时间**：octos 的完整编译（clean build）需要数分钟，增量编译通常在 10-30 秒。对比 Go 的亚秒级编译，这在快速迭代阶段是明显的效率损失。
-- **生态成熟度**：AI/ML 生态远不如 Python 丰富，octos 需要自行实现 BM25 搜索（`crates/octos-memory/`）和集成 HNSW 向量索引（`hnsw_rs` crate），而不是直接调用 scikit-learn 或 FAISS。
-- **开发速度**：同样功能的 Rust 代码通常比 Python 多 30-50% 的行数，主要增加在错误处理（`Result`/`?` 链）和类型标注上。
+第三，热路径在框架里，不在 LLM 里。 SSE 流式解析、消息频道的分片切割、上下文压缩的截断、工具输出的尺寸估算，这些都在每次迭代里执行。octos-core 里有一个典型的小函数 `truncate_utf8`（`crates/octos-core/src/utils.rs:6-16`）：
 
-octos 团队认为这些代价是值得的：对于一个需要长期运行的多租户生产平台，运行时的正确性和性能比开发时的便利性更重要。编译器在开发阶段多花的 30 秒，换来的是生产环境中不会出现的内存泄漏、数据竞争和未定义行为。而异步编程的复杂度虽然提高了入门门槛，但一旦代码通过编译，其并发正确性就有了编译期保证——这对一个 7×24 运行的 Agent 平台至关重要。
+```rust
+pub fn truncate_utf8(s: &mut String, max_len: usize, suffix: &str) {
+    if s.len() <= max_len { return; }
+    let mut limit = max_len;
+    while limit > 0 && !s.is_char_boundary(limit) {
+        limit -= 1;
+    }
+    s.truncate(limit);
+    s.push_str(suffix);
+}
+```
+
+它做的事很小：在 UTF-8 字符边界安全截断。但它出现在消息裁剪、频道分片、工具输出限幅等所有热路径上。注意它接收 `&mut String` 原地截断而不是返回新分配的 `String`：在每条消息都可能被截断的路径上，省掉的是每次迭代里成千上万次的堆分配。这类「不惊人但无处不在」的开销，恰恰是框架性能的主体。
+
+三大挑战讲完了。它们的共性是：都不能靠「写代码时小心」解决，必须靠语言与组织的结构性保证。这就引出语言选型。
 
 ---
 
-## 1.3 Workspace 拓扑：11 个核心 crate 的分层架构
+## 1.2 语言选型：Python、Go 与 Rust 的四维对比
 
-octos 采用 Cargo workspace 组织代码。按当前主分支的主架构口径计算，可以把它拆成 11 个 octos-* 核心 crate；另外还有 14 个 app skill 和 1 个 platform skill，负责补充具体能力。workspace 根 `Cargo.toml` 是这个拓扑的事实来源。
+octos 的候选集其实只有三个：Python（LangChain/AutoGen 生态最厚）、Go（云原生并发最顺手）、Rust（安全与性能的上限最高）。下面按安全、并发、性能、生态四个维度逐一对照，结论先行：Rust 赢在前三维，输在第四维，而第四维的缺口可以用工程手段弥补。
 
-### 1.3.1 四层架构
+### 1.2.1 安全维度：内存安全是防御纵深的第零层
 
-**第零层：独立基础设施**
+1.1.1 节的三层防御中，最底层是「运行时自身无内存安全漏洞」。一个用 C/C++ 写的 Agent 运行时，沙箱做得再好，也可能在解析恶意构造的 SSE 分片或 WebSocket 帧时自己先倒下，因为解析不可信输入正是内存安全漏洞的高发区。octos 的做法很直接：workspace 根 `Cargo.toml` 统一 lint（`Cargo.toml:50-51`）：
 
-这一层的 crate 没有内部依赖，提供独立的基础能力：
+```toml
+[workspace.lints.rust]
+unsafe_code = "deny"
+```
 
-- **octos-core**（8,757 行）：核心类型定义——`Task`、`Message`、`MessageRole`、`AgentId`、`SessionKey` 等。这是整个系统的"领域语言"，所有其他 crate 共享这些类型定义。零内部依赖的设计确保了类型定义的稳定性。
-- **octos-plugin**（2,882 行）：插件 SDK——manifest.json 解析、插件发现（目录扫描 + 优先级规则）、三重门控检查（binary/env/OS）。当前由 octos-agent 依赖，用于把插件发现与门控从主循环里拆出来。
-- **octos-sandbox**（146 行）：Windows 平台的 AppContainer 沙箱辅助。极简实现，平台特定。
+一行配置，26 个目录、38 个成员全部继承，`unsafe` 在整个代码库被编译器拒绝（除非逐 crate 显式豁免）。Python 与 Go 在这一层各有姿态：Python 解释器由 C 实现，历史上多次出现解析恶意输入导致的内存安全 CVE；Go 自带内存安全，但 `unsafe` 包与 cgo 交界处同样存在失守面。Rust 的差异在于把「无 unsafe」变成可机器验证的全库不变量，而不是编码规约。
 
-**第一层：领域服务**
+类型系统的另一重价值是「让非法状态不可表示」。Agent 领域最容易出 bug 的地方（消息角色的枚举、任务状态的迁移、工具结果的形状）在 octos-core 里都是穷尽匹配的 `enum`，漏一个分支编译不过。这比「运行时校验 + 测试覆盖」的防线提前了整整一个阶段。
 
-依赖 octos-core，提供特定领域的能力：
+### 1.2.2 并发维度：把数据竞争消灭在编译期
 
-- **octos-llm**（17,604 行）：LLM Provider 抽象层。统一了 Anthropic（Claude）、OpenAI（GPT-4）、Google Gemini、Ollama 等多种 Provider 的调用接口。包含三层容错链（RetryProvider → ProviderChain → AdaptiveRouter）、credential pool、content classifier、SSE 流式解析器、模型目录和定价计算。
-- **octos-memory**（1,635 行）：混合搜索记忆系统。基于 redb 嵌入式数据库实现 BM25 全文搜索和 HNSW 向量索引，支持 Episode Store（任务完成摘要与 7 天窗口记忆）。
-- **octos-bus**（30,270 行）：消息总线与频道集成。支持 Telegram、Discord、Slack、WhatsApp、飞书、邮件等消息频道，提供会话管理、多租户账号绑定、管理令牌和消息分片策略。
+先看三段语言语义的对照（示意代码，非 octos 源码）：
 
-**第二层：运行时引擎**
+```go
+// Go:两个 goroutine 并发自增。编译通过，数据竞争潜伏
+go func() { counter++ }()
+go func() { counter++ }()
+```
 
-依赖第零层和第一层，实现核心运行时逻辑：
+```python
+# Python:CPython GIL 使线程无法并行执行 CPU 工作
+threads = [threading.Thread(target=process_chunk) for c in chunks]
+```
 
-- **octos-agent**（84,422 行）：Agent 运行时——这是整个系统的心脏。包含 Agent 主循环、工具注册与执行、命令审批策略、沙箱集成、MCP 客户端、Hook 系统、循环检测、上下文压缩等。依赖 octos-core、octos-llm、octos-memory、octos-bus、octos-plugin。
-- **octos-pipeline**（13,497 行）：工作流引擎。基于 Graphviz DOT 语法定义工作流拓扑，当前主路径支持 `Codergen`、`Shell`、`Gate`、`Noop`、`Parallel`、`DynamicParallel` 等 handler。依赖 octos-core、octos-agent、octos-llm、octos-memory。
-- **octos-swarm**（3,738 行）：多子 Agent 编排原语。它把 fan-out、sequence、pipeline 等模式封装为可持久化的 swarm plan，底层依赖 octos-agent 执行 MCP-backed sub-agent。
-- **octos-dora-mcp**（372 行）：Dora-RS 到 MCP tool 的桥接层。它依赖 octos-agent，把外部数据流/节点能力包装成 Agent 可调用的 MCP 工具。
+```rust
+// Rust:同样的写法无法通过编译，借用在跨线程时必须显式
+s.spawn(|| counter += 1);  // ❌ error: closure may outlive borrowed value
+```
 
-**第三层：用户入口**
+Go 的 goroutine 模型写起来最省事，但正确性依赖纪律与 `-race` 检测。race detector 基于 happens-before 算法，本质上是测试期工具，覆盖不到的路径不受保护。Python 的 GIL 则直接封死了「单进程多线程并行」这条路，`asyncio` 能处理 I/O 并发但一个同步调用就会卡住整个事件循环，多进程方案的序列化开销又与 1.1.2 要求的细粒度共享状态模型相抵触。
 
-- **octos-cli**（89,237 行）：CLI、Web 与 MCP Server 入口——整个系统的"前门"。提供 `chat`、`gateway`、`serve`、`mcp-serve` 等运行模式，并承载 Web Dashboard、REST/API/AppUI、生产控制面和 swarm 命令入口。通过 feature flags 控制各频道集成（telegram、discord、slack 等）的编译。依赖 octos-core、octos-agent、octos-llm、octos-memory、octos-pipeline、octos-bus、octos-swarm。
+Rust 的答案是把并发正确性编码进类型系统：`Send`（可跨线程转移）与 `Sync`（可跨线程共享）两个 marker trait 由编译器自动推导，跨 `.await` 持有非 `Send` 的借用会直接编译失败。1.1.2 节那四条正确性要求（会话串行化、工具并行、优雅关停、任务不借用栈状态）在 Rust 里每一条都有对应的编译期保障形态。代价是学习曲线，收益是整类故障从生产事故清单上消失。
 
-### 1.3.2 依赖拓扑图
+### 1.2.3 性能维度：无 GC 的确定性延迟
+
+Agent 框架的性能画像很特殊：大量短生命周期分配（消息、分片、工具结果）、长驻任务（会话、频道连接）、以及必须平滑的流式路径（SSE 解析逐 token 转发）。GC 语言在这种画像下的典型症状是：停顿本身不频繁，但停顿发生在哪次迭代里不可预测：今天压测 p99 很好，明天某条会话的长对话触发大回收，流式输出肉眼可见地卡一下。
+
+Rust 无 GC：分配与释放跟随着所有权在编译期确定，`Drop` 析构让文件描述符、子进程句柄、锁的释放都确定性地发生。1.1.3 节的 `truncate_utf8` 已经展示了「避免分配」的写法；再往上一层，octos-agent 的工具 trait 签名（`crates/octos-agent/src/tools/mod.rs:609-642`，节选）：
+
+```rust
+#[async_trait]
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn input_schema(&self) -> serde_json::Value;
+    async fn execute(&self, args: &serde_json::Value) -> Result<ToolResult>;
+}
+```
+
+注意 `Tool: Send + Sync` 这个约束，它是 1.2.2 节的编译期并发保证在工具系统上的落点：任何工具实现想被注册进注册表并在多会话间共享，编译器就强制它证明自己线程安全。性能与并发两个维度在这里合流：同一个类型系统约束，同时买到了并行安全与零开销抽象。
+
+### 1.2.4 生态维度与选型代价
+
+诚实地说，生态是 Rust 的相对短板：LangChain/AutoGen 的教程与现成集成更丰富，Python 是 LLM 事实上的「胶水语言」；Go 在云原生基础设施（K8s 生态、指标、部署工具链）上更成熟。octos 的应对是把生态问题转化为架构问题。这解释了 1.3 节拓扑里的两条链。
+
+第一条链向外接语言生态：`octos-ffi`（C-ABI）之下挂 `octos-pyo3` / `octos-uniffi` / `octos-wasm`，让 Python、Swift/Kotlin、浏览器以原生绑定嵌入 octos，Python 生态的用户不必放弃 Python。
+
+第二条链接能力生态：`octos-plugin` 让外部能力以 manifest + 二进制协议接入，`app-skills` 14 个能力二进制干脆零 `octos-*` 依赖、完全独立演进。Rust 只负责必须由 Rust 负责的核心，边缘留给各个生态自己。
+
+选型的代价同样要写明：学习曲线陡（借用检查器对新人不友好，读者 A 请预期前两周的挫败感）；编译时间长（全量构建 70 万行代码需要耐心，增量构建与 26 crate 的拆分正是缓解手段）；部分领域库（如某些新兴协议的 SDK）需要自己写而不是 pip install。这些代价换来的是上面三个维度的结构性保证。对「多租户 + 可执行代码 + 长驻进程」这三类工作负载，Rust 的编译期保证收益大于生态成本。
+
+---
+
+## 1.3 Workspace 拓扑：26 个 crate 的八层地图
+
+语言解决「怎么写得对」，workspace 解决「怎么长得对」。octos 用一个 Cargo workspace 组织 26 个顶层目录，本节先立统计口径，再按依赖方向推导分层，然后澄清三处最容易搞错的事实，最后给出完整的依赖拓扑图。
+
+### 1.3.1 规模基准与统计口径
+
+本章所有规模数字以源码仓库 main 分支 commit `9c157101`（2026-09-02 统计）为准，逐条可复现：
+
+| 指标 | 值 | 口径与命令 |
+|---|---|---|
+| crate 目录总数 | 26 | `ls crates \| wc -l`；= 23 个 `octos-*` crate + `app-skills` + `platform-skills` + `octos-web` 三个目录 |
+| Rust 总行数 | 700,915 | `find crates -name '*.rs' \| xargs wc -l \| tail -1`；仅统计 `.rs` 文件，`octos-web` 计 0 |
+| workspace 成员数 | 38 | 根 `Cargo.toml` `members` 列表长度；26 目录中 `app-skills`/`platform-skills` 是多 crate 目录（各含 14/1 个成员），23+14+1=38，`octos-web` 不是成员 |
+| 消息频道源文件 | 17 | `ls crates/octos-bus/src/*crates/octos-bus/src/cli_channel.rs \| wc -l` |
+| 工具源文件 | 59 | `ls crates/octos-agent/src/tools/*.rs \| wc -l`；是文件数不是工具数（含 `crates/octos-agent/src/tools/mod.rs`、`crates/octos-agent/src/tools/registry.rs`、测试等框架文件） |
+
+26 与 38 的关系值得单独强调：目录数 ≠ 成员数 ≠ 核心库数。`crates/app-skills/` 没有顶层 `Cargo.toml`，它是一个装着 14 个独立二进制 crate 的目录；`platform-skills/` 装 1 个（voice）；`octos-web` 连 Rust 都没有。把这四个数字混为一谈，是外部读者对 octos 结构最常见的第一重误解。
+
+### 1.3.2 八层分层：L0–L7 加一层「能力层」
+
+分层由依赖方向推导得出：每个 crate 的层 = 1 + max(其 `[dependencies]` 中所有 `octos-*` 依赖的层)，零内部依赖者为 L0。按此规则，26 个目录落入 8 层（L0–L7）加一个不计层数的能力层：
+
+- L0 基础层：`octos-core`（核心类型、任务模型与协议，22,313 行，全库的领域语言）、`octos-plugin`（插件 SDK：manifest 解析、发现、门控，5,165 行）、`octos-sandbox`（1,468 行；注意它是平台助手二进制，见 1.3.3）。
+- L1 原语层（只依赖 core）：`octos-bus`（消息总线、17 个频道、会话管理，42,767 行）、`octos-llm`（Provider 抽象，35,087 行）、`octos-memory`（情景记忆，6,428 行）、`octos-diagnostics`（诊断与更新规划，2,243 行）、`octos-store`（自包含持久化存储，2,664 行）、`octos-fleet`（Fleet 内核存储：事务记录 + 单写事务 CAS + 恢复对账，16,888 行）、`octos-wasm`（浏览器端协议绑定，883 行）。
+- L2 运行时层：`octos-agent`（Agent 运行时、工具执行与协调，191,985 行，全库心脏，依赖 core/bus/memory/llm/plugin）、`octos-services`（从 CLI 抽出的支撑服务，3,223 行）、`octos-embed-llama`（进程内 GGUF embedding，911 行）。
+- L3 编排层（直接依赖 agent）：`octos-pipeline`（DOT 流水线引擎，32,799 行）、`octos-swarm`（fan-out/sequence/pipeline 编排原语，4,980 行）、`octos-dora-mcp`（dora 桥兼容 re-export，11 行）、`octos-fleet-worker`（封闭非交互任务 worker，6,842 行）。
+- L4 工作流层：`octos-workflows`（依赖 pipeline，1,059 行）。
+- L5 集成层：`octos-server`（HTTP/WebSocket API + 会话运行时，门面薄层仅 21 行）、`octos-cli`（CLI 入口，307,299 行，依赖 15 个 crate，是全库汇聚点）。
+- L6 嵌入核心层：`octos-ffi`（C-ABI 绑定，1,372 行，依赖 cli/agent/llm/memory/embed-llama 等）。
+- L7 绑定层：`octos-uniffi`（Python/Swift/Kotlin，465 行）、`octos-pyo3`（推荐 Python 绑定，756 行）。
+- 能力层（不计层数）：`app-skills`（14 个能力二进制，合计 12,098 行）、`platform-skills/voice`（1,188 行）、`octos-web`（前端，0 行 Rust）。它们的共同特征：**零 `octos-*` 依赖、不被任何 crate 依赖**，因此不参与核心库分层。
+
+两个行数悬殊值得停下来看一眼：`octos-server` 只有 21 行却站在 L5，因为它是纯粹的组装门面，真正逻辑全在下层 crate；`octos-cli` 占全库 44% 站在 L5，因为它是「前门」，把 15 个下层 crate 的能力装配成 `chat`/`gateway`/`serve` 等运行模式。层反映的是依赖深度，不是重要性，更不是代码量。
+
+### 1.3.3 三处事实澄清：读仓库前先纠正三个印象
+
+外部材料（包括本书 v1 版稿）对 octos 结构有三处系统性误传，读源码前必须纠正：
+
+澄清一：`octos-sandbox` 不是沙箱子系统。 它的 `Cargo.toml` description 是 "Platform sandbox helper for octos"，1,468 行，`[dependencies]` 只有 clap 和 eyre，零 `octos-*` 依赖。它是随平台分发的辅助二进制。真正的沙箱在 `octos-agent` 内部：`crates/octos-agent/src/sandbox/` 下六个文件（`crates/octos-agent/src/sandbox/bwrap.rs`、`crates/octos-agent/src/sandbox/docker.rs`、`crates/octos-agent/src/sandbox/landlock.rs`、`crates/octos-agent/src/sandbox/macos.rs`、`crates/octos-agent/src/sandbox/windows.rs`、`crates/octos-agent/src/sandbox/mod.rs`），覆盖 Linux bubblewrap/Landlock、Docker、macOS sandbox-exec、Windows AppContainer 与无沙箱回退（`crates/octos-agent/src/sandbox/mod.rs:1-23`）。谈「octos 沙箱」，指的永远是 `octos-agent::sandbox`。
+
+澄清二：`octos-web` 不含 Rust、不是 workspace 成员。 它是 TypeScript 项目（`package.json`/`tsconfig.json`/`vitest.config.ts`），0 个 `.rs` 文件；根 `Cargo.toml` 的 `members` 里 grep 不到 `octos-web`。它是前端静态资源，不在 Cargo 依赖图内，拓扑图里它是孤立节点。
+
+澄清三：不存在 harness crate。 `ls crates | grep harness` 零命中。harness 是 `octos-agent` 内部的模块：`crates/octos-agent/src/lib.rs:30-31` 声明 `pub mod harness_errors;` 与 `pub mod harness_events;` 两个平级模块文件。别把 `app-skills/harness-starter-*` 四个脚手架当成 harness 本体，它们是面向用户的起步模板，不是 harness 实现。第 10 章会专门讲 Harness。
+
+### 1.3.4 依赖拓扑图：63 条边一张图
+
+下图是整个 workspace 的依赖拓扑，63 条依赖边一条不多、一条不少，每条边都来自对应 crate `Cargo.toml` 的 `[dependencies]` 段（机器核对命令：`awk '/^\[dependencies\]/{f=1;next} /^\[/{f=0} f && /^octos-/' crates/*/Cargo.toml | wc -l` → 63）。方向为 `A --> B` 即 A 依赖 B，`graph BT` 自底向上读：越靠上的 crate 越靠近用户。
 
 ```mermaid
 graph BT
-    subgraph "第零层：独立基础设施"
-        core["octos-core<br/><i>8,757 行 · 核心类型</i>"]
-        plugin["octos-plugin<br/><i>2,882 行 · 插件 SDK</i>"]
-        sandbox["octos-sandbox<br/><i>146 行 · Windows 沙箱</i>"]
-    end
+  subgraph L0["L0 基础层"]
+    core[octos-core]
+    plugin[octos-plugin]
+    sandbox[octos-sandbox<br/>平台助手二进制]
+  end
+  subgraph L1["L1 原语层"]
+    bus[octos-bus]
+    llm[octos-llm]
+    memory[octos-memory]
+    diag[octos-diagnostics]
+    store[octos-store]
+    fleet[octos-fleet]
+    wasm[octos-wasm]
+  end
+  subgraph L2["L2 运行时层"]
+    agent[octos-agent]
+    services[octos-services]
+    embed[octos-embed-llama]
+  end
+  subgraph L3["L3 编排层"]
+    swarm[octos-swarm]
+    dora[octos-dora-mcp]
+    fworker[octos-fleet-worker]
+    pipeline[octos-pipeline]
+  end
+  subgraph L4["L4 工作流层"]
+    workflows[octos-workflows]
+  end
+  subgraph L5["L5 集成层"]
+    server[octos-server]
+    cli[octos-cli]
+  end
+  subgraph L67["L6/L7 嵌入与绑定层"]
+    ffi[octos-ffi]
+    uniffi[octos-uniffi]
+    pyo3[octos-pyo3]
+  end
+  subgraph CAP["能力层 / 前端（孤立，不计层数）"]
+    appskills[app-skills<br/>14 个能力二进制]
+    platskills[platform-skills/voice<br/>能力二进制]
+    web[octos-web<br/>前端静态资源<br/>不在依赖图]
+  end
 
-    subgraph "第一层：领域服务"
-        llm["octos-llm<br/><i>17,604 行 · LLM 抽象</i>"]
-        memory["octos-memory<br/><i>1,635 行 · 混合搜索</i>"]
-        bus["octos-bus<br/><i>30,270 行 · 消息总线</i>"]
-    end
-
-    subgraph "第二层：运行时引擎"
-        agent["octos-agent<br/><i>84,422 行 · Agent 运行时</i>"]
-        pipeline["octos-pipeline<br/><i>13,497 行 · 工作流引擎</i>"]
-        swarm["octos-swarm<br/><i>3,738 行 · 子 Agent 编排</i>"]
-        dora["octos-dora-mcp<br/><i>372 行 · Dora/MCP 桥接</i>"]
-    end
-
-    subgraph "第三层：用户入口"
-        cli["octos-cli<br/><i>89,237 行 · CLI / Web / Gateway</i>"]
-    end
-
-    llm --> core
-    memory --> core
-    bus --> core
-
-    agent --> core
-    agent --> bus
-    agent --> llm
-    agent --> memory
-    agent --> plugin
-
-    pipeline --> core
-    pipeline --> agent
-    pipeline --> llm
-    pipeline --> memory
-
-    swarm --> agent
-    dora --> agent
-
-    cli --> core
-    cli --> agent
-    cli --> llm
-    cli --> memory
-    cli --> pipeline
-    cli --> bus
-    cli --> swarm
+  bus --> core
+  llm --> core
+  memory --> core
+  diag --> core
+  store --> core
+  fleet --> core
+  wasm --> core
+  agent --> core
+  agent --> bus
+  agent --> memory
+  agent --> llm
+  agent --> plugin
+  services --> core
+  services --> llm
+  services --> bus
+  embed --> llm
+  swarm --> agent
+  dora --> agent
+  fworker --> agent
+  fworker --> core
+  fworker --> fleet
+  fworker --> llm
+  fworker --> memory
+  pipeline --> core
+  pipeline --> agent
+  pipeline --> plugin
+  pipeline --> llm
+  pipeline --> memory
+  workflows --> core
+  workflows --> agent
+  workflows --> pipeline
+  server --> core
+  server --> agent
+  server --> llm
+  server --> bus
+  server --> store
+  server --> services
+  server --> workflows
+  server --> pipeline
+  server --> plugin
+  cli --> core
+  cli --> bus
+  cli --> llm
+  cli --> memory
+  cli --> agent
+  cli --> diag
+  cli --> store
+  cli --> services
+  cli --> workflows
+  cli --> pipeline
+  cli --> swarm
+  cli --> plugin
+  cli --> fleet
+  cli --> fworker
+  cli --> embed
+  ffi --> core
+  ffi --> agent
+  ffi --> llm
+  ffi --> memory
+  ffi --> cli
+  ffi --> embed
+  uniffi --> ffi
+  pyo3 --> ffi
 ```
 
-**图 1-1：octos workspace 依赖拓扑。** 箭头方向为"依赖于"，即上层依赖下层。octos-cli 对 octos-bus 和 octos-swarm 是硬依赖，但 bus 内部的各频道集成（Telegram、Discord 等）通过 feature flags 按需启用。octos-plugin 已经进入 Agent 运行时依赖链；octos-sandbox 仍是平台辅助 crate，不被其他核心 crate 直接依赖。
+读图要点：（1） `octos-core` 是唯一被 15 个 crate 依赖的根，它必须保持零内部依赖与极高稳定性（第 2 章的主题）。（2） `octos-agent` 被 8 个 crate 依赖（pipeline、swarm、dora-mcp、fleet-worker、workflows、server、ffi、cli），是事实上的第二枢纽。（3） 四个孤立节点（app-skills、platform-skills/voice、octos-web、octos-sandbox）不在 63 条边内：能力二进制与前端通过进程边界而非 Cargo 依赖接入，这正是它们「不属于核心库分层」的形式化表述。（4） 依赖全部指向下方，无环；新增任何一条向上的边都会在 `cargo` 那里直接报错，分层是被工具链强制的不变量。
 
-### 1.3.3 代码规模一览
-
-| Crate | 代码行数 | 占比 | 核心职责 |
-|-------|---------|------|---------|
-| octos-cli | 89,237 | 33.7% | 运行模式 + Web UI + REST API + MCP Serve + 控制面 |
-| octos-agent | 84,422 | 31.9% | Agent 主循环 + 工具系统 + 安全策略 |
-| octos-bus | 30,270 | 11.4% | 多频道集成 + 会话/账号管理 |
-| octos-llm | 17,604 | 6.6% | 多 Provider 抽象 + 容错 + 流式 |
-| octos-pipeline | 13,497 | 5.1% | DOT 工作流引擎 |
-| octos-core | 8,757 | 3.3% | 核心类型定义 |
-| octos-swarm | 3,738 | 1.4% | 子 Agent 编排原语 |
-| octos-plugin | 2,882 | 1.1% | 插件发现与门控 |
-| octos-memory | 1,635 | 0.6% | 嵌入式混合搜索 |
-| octos-dora-mcp | 372 | 0.1% | Dora-RS / MCP 桥接 |
-| octos-sandbox | 146 | 0.1% | Windows 沙箱 |
-| app-skills + platform-skills | 12,326 | 4.7% | 15 个 skill 二进制程序 |
-| **合计** | **264,886** | **100%** | 11 个 octos-* crate + 15 个 skill 程序 |
-
-**表 1-1：octos 代码规模分布。** 基于 `tokei ../octos/crates --type Rust`，当前主分支共有 264,886 行 Rust 源文件、444 个 Rust 文件。行数用于建立规模感，不作为质量指标；随着 Web/API 控制面、swarm、harness starter skills 的加入，当前主分支已经明显大于 v0.1.0 时的规模。
-
-除 11 个核心 crate 外，octos 还包含两类 skill 二进制程序：
-
-- **app-skills**（14 个）：应用级能力——新闻聚合、深度搜索、深度爬虫、邮件发送、账号管理、时间查询、天气查询、微信桥接、Pipeline 审批、skill evolution，以及 generic/report/audio/coding harness starter。每个 skill 是一个独立的二进制程序，通过 stdin/stdout JSON 协议与 Agent 交互。
-- **platform-skills**（1 个）：平台级能力——voice skill，提供 Apple Silicon 上的 ASR/TTS 模型管理。
+> ### 工程决策侧栏：mono-repo workspace vs multi-repo
+>
+> 26 个 crate、63 条内部依赖边，摆在面前的组织方案至少有三种：
+>
+> 方案 A：multi-repo，每 crate 一仓。 优点：权限边界清晰、每仓可独立发版与裁剪 CI、外部贡献者 clone 面小。缺点对 octos 是致命的：63 条边意味着跨仓改动是常态而非例外：改一处 `octos-core` 的类型定义会波及 15 个下游 crate，multi-repo 下你要开 16 个 PR、维护 16 个版本号与 16 份 lockfile，跨仓原子重构不可能，CI 还要在每仓重复编译公共依赖。语义化版本挡不住「接口变了但版本没升对」的人祸。
+>
+> 方案 B：single mega-crate。 把全部 70 万行塞进一个 crate。优点：无跨 crate 版本问题、重构随便改。缺点同样致命：编译时间失控（任何一行改动触发全量重编）；`octos-web` 这类非 Rust 资产无处安放；`app-skills` 的 14 个二进制会被迫拖上全部核心依赖（它们本来零 `octos-*` 依赖）；feature flag 组合爆炸，任何一个模块开错 feature 都可能污染全局编译。
+>
+> 方案 C（octos 的选择）：Cargo workspace mono-repo。 既保留了单仓的原子性（跨 crate 重构是一个 commit、一次 CI），又用 crate 边界保住了编译隔离与依赖方向：根 `Cargo.toml` 统一 `members`（38 项）、统一 `workspace.package`（version/edition 2024/rust-version 1.85.0）、统一 `workspace.lints`（`unsafe_code = "deny"` 一处生效全库）、统一 `workspace.dependencies` 管内部 path 依赖版本。分层靠 `[dependencies]` 的方向自然成立，`cargo` 本身就是架构守护者。
+>
+> 附带的工程红利：能力二进制（app-skills/platform-skills）作为 workspace 成员享受统一工具链，却因零 `octos-*` 依赖而不进入核心编译图；将来若某个 crate 需要独立演进，从 workspace 拆出也远比从 mega-crate 拆出便宜。取舍：mono-repo 的代价是仓库体积增长、CI 必须做分层缓存、外部贡献者面对的是一棵 26 目录的大树，octos 用目录分层（1.3.2）与本书的导航（1.4）来对冲。
 
 ---
 
-> ### 工程决策侧栏：Mono-repo vs Multi-repo
->
-> octos 选择了 Cargo workspace（mono-repo）而非将每个 crate 发布为独立仓库。这个决策值得展开分析。
->
-> **方案一：Multi-repo（每个 crate 独立仓库）**
->
-> 优势：
-> - 每个 crate 可以独立发布到 crates.io，其他项目可以按需引用
-> - 各 crate 有独立的 issue tracker 和 CI pipeline
-> - 权限可以按仓库粒度控制
->
-> 劣势：
-> - 跨 crate 的重构变成多仓库协调，一个类型改名需要按依赖顺序发布 5+ 个 crate
-> - 版本兼容性噩梦：octos-agent v0.3 依赖 octos-core v0.2，但 octos-cli v0.4 依赖 octos-core v0.3，导致菱形依赖
-> - CI 测试无法原子性地验证跨 crate 变更
->
-> **方案二：Mono-repo + Cargo workspace**
->
-> 优势：
-> - 跨 crate 重构是一个 commit、一个 PR，原子性保证
-> - 所有 crate 共享统一的依赖版本（`[workspace.dependencies]`），消除版本碎片化
-> - 一次 `cargo test --workspace` 验证全部 workspace 成员的兼容性
-> - workspace 级别的 lint 配置（如 `deny(unsafe_code)`）自动应用到所有 crate
->
-> 劣势：
-> - 仓库体积随时间增长
-> - 不适合外部用户单独引用某个 crate
->
-> **octos 的选择：workspace，原因有三。**
->
-> 第一，octos 的核心 crate 高度耦合——octos-agent 同时依赖 octos-core、octos-bus、octos-llm、octos-memory、octos-plugin，任何一个核心类型或事件协议的变更都会波及多个 crate。multi-repo 模式下，一个 `Message` 类型的字段变更可能需要按 core → bus/llm/memory/plugin → agent → pipeline/swarm/dora → cli 的顺序发布多轮版本，每个版本都需要等上游发布后才能开始。在 workspace 中，这是一个 commit。
->
-> 第二，`[workspace.dependencies]` 确保所有 crate 使用完全相同版本的 tokio、serde、reqwest 等关键依赖，避免了同一个程序中链接多个版本的运行时。
->
-> 第三，workspace 级别的 `[workspace.lints.rust]` 让 `deny(unsafe_code)` 策略自动覆盖所有继承 workspace lint 的 crate，无需在每个 crate 的 `lib.rs` 中重复声明。这确保了安全策略的一致性——不会有某个 crate 遗漏了这个约束。
+## 1.4 全书导览
 
----
+本书 v2 版按「地基 → 引擎 → 平台 → 双环」四部分展开，共 21 章 + 附录。编号以 v2 重写计划为准（相对 v1 有平移：原第 10 章 bus 移至第 11 章，第 10 章成为新增的 Harness 章）：
 
-## 1.4 本章回顾
+| 部分 | 章 | 主题 |
+|---|---|---|
+| 第一部分 地基 | Ch1 | 为什么是 Rust？为什么是 Agent OS？（本章） |
+| | Ch2 | octos-core：用类型系统定义领域语言 |
+| | Ch3 | octos-llm：驯服 LLM Provider 的混乱 |
+| | Ch4 | octos-memory：混合搜索的工程实现 |
+| 第二部分 引擎 | Ch5 | Agent Loop：一次对话的完整生命周期 |
+| | Ch6 | 工具系统：59 个源文件背后的设计模式 |
+| | Ch7 | 安全纵深：从沙箱到 Prompt 注入防御 |
+| | Ch8 | 上下文管理：让 Agent 在有限窗口中高效工作 |
+| | Ch9 | 扩展机制：Skills 与 Plugins 双轨制 |
+| | Ch10 | Harness（新增）：校验器、事件 ABI、schema 版本化 |
+| 第三部分 平台 | Ch11 | octos-bus：17 频道的统一消息抽象 |
+| | Ch12 | 并发模型：Tokio、supervisor、peer、lease 三层调度 |
+| | Ch13 | octos-pipeline：DOT 图驱动的工作流引擎（12 种 IR 节点） |
+| | Ch14 | 三种运行模式与配置体系（含 stdio/solo） |
+| | Ch15 | 生产化：octos-store / octos-services、认证与监控 |
+| | Ch16 | Fleet（新增）：可恢复的计划执行内核 |
+| | Ch17 | Swarm（新增）：契约扇出与聚合门禁 |
+| | Ch18 | Goal 与 Peer（新增）：把目标从上下文里搬出来 |
+| 第四部分 双环 | Ch19 | octoscode（新增）：终端客户端与 UI Protocol |
+| | Ch20 | OctoLoop（新增）：外环协议 OLP v2 |
+| | Ch21 | herdr 与外环运维实务（新增） |
+| 附录 | A–D、F | 26 crate 依赖全图、工具速查、配置参考（mcp_servers/sub_providers/validators）、Feature Flags、OLP v2 协议速查（新增） |
 
-本章从三个维度阐述了 octos 的设计基础：
+阅读路线建议：A 类读者按顺序读，Ch1–Ch5 建立 Rust + Agent 的双基础；B 类读者可跳过语言论证直达 Ch5、Ch12、Ch16；C 类读者优先 Ch1、Ch7、Ch11、Ch13，跳过实现细节侧栏；D 类贡献者请先读完本章与附录 A 再动第一个 PR。
 
-1. **问题空间**：多租户 AI Agent 平台面临安全隔离、并发控制、性能预算三大相互纠缠的挑战。这三个约束的同时存在决定了语言选型不是品味问题。
+## 1.5 本章回顾
 
-2. **语言选型**：Rust 在安全性（`deny(unsafe_code)` + 所有权系统）、并发模型（`Send`/`Sync` 编译期保证）、性能（无 GC、确定性延迟）三个维度上最适合这组约束。代价是更陡峭的学习曲线和更长的编译时间。
+1. 问题空间：多租户 AI Agent 平台的安全隔离（59 个工具源文件 + 17 个频道的攻击面）、并发（会话/工具/进程三重并发面的正确性）、性能（乘性延迟、多租户内存、框架热路径）三大挑战相互纠缠，决定了选型是架构决策。
+2. 语言选型：Rust 在安全（全库 `deny(unsafe_code)` + 类型系统）、并发（`Send`/`Sync` 编译期保证）、性能（无 GC、确定性析构、零分配热路径）三维胜出；生态短板用 FFI/绑定链（pyo3/uniffi/wasm）与 plugin/skill 扩展机制对冲。
+3. Workspace 拓扑：26 目录 = 23 个 `octos-*` crate + 2 个技能目录 + 1 个前端目录；38 个 workspace 成员按依赖方向落入 L0–L7 八层加不计层数的能力层；63 条依赖边无一环、全部向下。`octos-sandbox` 是助手二进制（真沙箱在 `octos-agent::sandbox` 六文件）、`octos-web` 非 Rust 非成员、harness 是 `octos-agent` 内模块而非 crate，三处澄清是读仓库的正确起点。
 
-3. **Workspace 拓扑**：11 个 octos-* 核心 crate 分为四层——独立基础设施（core/plugin/sandbox）→ 领域服务（llm/memory/bus）→ 运行时引擎（agent/pipeline/swarm/dora-mcp）→ 用户入口（cli）。依赖方向总体从上到下，app/platform skills 作为独立二进制程序补充具体能力，各频道集成通过 feature flags 按需启用。
-
-从下一章开始，我们将自底向上，从 octos-core 的类型系统出发，逐层深入每个 crate 的设计与实现。
+从下一章开始自底向上：先看 L0 的 `octos-core` 如何用类型系统为整个平台定义领域语言。
 
 ---
 
 ## 延伸阅读
 
-- **Rust 所有权系统**：*The Rust Programming Language* 第 4 章 "Understanding Ownership"，https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html
-- **Cargo Workspace**：Cargo 官方文档 "Workspaces" 章节，https://doc.rust-lang.org/cargo/reference/workspaces.html
-- **Tokio 异步运行时**：Tokio 官方教程，https://tokio.rs/tokio/tutorial
-- **DDIA 设计哲学**：Martin Kleppmann, *Designing Data-Intensive Applications*（O'Reilly, 2017）——本书的写作风格参考了 DDIA 的"先讲问题，再讲方案"叙事结构
-- **AI Agent 安全**：OWASP Top 10 for LLM Applications，https://owasp.org/www-project-top-10-for-large-language-model-applications/
+- Cargo Workspaces：官方文档 "Workspaces" 章，https://doc.rust-lang.org/cargo/reference/workspaces.html ，对照 1.3 的 members/lints/dependencies 继承机制。
+- Rust 所有权与并发：*The Rust Programming Language* Ch4 "Understanding Ownership" 与 Ch16 "Fearless Concurrency"，https://doc.rust-lang.org/book/ ，`Send`/`Sync` 的推导规则。
+- Tokio 教程：https://tokio.rs/tokio/tutorial ，Ch12 并发模型的前置。
+- OWASP Top 10 for LLM Applications：https://owasp.org/www-project-top-10-for-large-language-model-applications/ ，prompt 注入与 Agent 安全的威胁分类。
+- 本书附录 A：26 crate 完整依赖图（本章拓扑图的全量版）。
 
 ## 思考题
 
-1. **安全隔离的边界**：如果你正在设计一个多租户 Agent 平台，你会选择进程级隔离还是容器级隔离？各自的性能和安全 trade-off 是什么？
-
-2. **GC vs 无 GC 的真实影响**：本章提到 Rust 无 GC 带来确定性延迟。但在 AI Agent 场景中，LLM API 调用延迟（1-10 秒）远大于 GC 停顿（毫秒级）。在什么情况下 GC 停顿会成为真正的问题？（提示：考虑多租户、高并发、上游 SSE 解析与进度事件投递场景。）
-
-3. **Workspace 设计练习**：假设你要为 octos 添加一个新的存储后端（比如 PostgreSQL 替代 redb），你会把它放在哪个现有 crate 中，还是创建一个新的 crate？为什么？
-
-4. **语言选型反思**：如果 octos 不需要多租户支持（只服务单个用户），语言选型的结论会改变吗？哪些约束会松弛，哪些仍然重要？
+1. 攻击面估算：以 1.1.1 的口径为方法，为一个「接入 3 个频道、注册 20 个工具」的自建 Agent 服务估算攻击面：哪些边界需要独立信任模型？哪一层最薄弱？
+2. 并发的编译期 vs 运行期：Go 的 `-race` 检测与 Rust 的 `Send`/`Sync` 各自兜住哪类错误、漏掉哪类？如果团队从 Go 迁到 Rust，哪些测试可以删，哪些必须保留？
+3. 层数权衡：octos 的 L6/L7（ffi → uniffi/pyo3）拆成两层，而不是让 pyo3 直接依赖全部核心 crate。这样拆让什么变贵、让什么变便宜？如果明天要加一个 Kotlin 绑定，改哪一层？
+4. 能力层的隔离价值：`app-skills` 的 14 个二进制零 `octos-*` 依赖。这带来什么工程性质？如果让它们直接依赖 `octos-agent`，编译图与发布节奏会发生什么变化？
+5. 组织镜像：对照 1.3.4 的拓扑图，为一个你熟悉的系统画出同样的依赖图。它的分层是像 octos 一样被工具链强制，还是只存在于文档里？差异会带来什么长期后果？
 
 ---
 
-> **版本演化说明**
-> 本章分析基于当前 `../octos` main 分支（workspace 定义见 `Cargo.toml`，edition = "2024"，rust-version = "1.85.0"）。相较 v0.1.0，核心拓扑已经加入 `octos-swarm` 与 `octos-dora-mcp`，skill 程序也扩展到 15 个；本章以当前 workspace 为准。
+## 版本演化说明
+
+> 本章分析基于 octos main @ `9c157101`（2026-09-02 统计）的 26 crate 工作区；所有规模数字（26 目录、38 成员、700,915 行 Rust、17 个频道源文件、59 个工具源文件、63 条依赖边）的统计口径与复现命令见 `assets/ch01-facts.md`，逐条可在源码仓库核对。
+>
+> 相对本书 v1 旧稿，本章作了三类更新。其一，三处事实纠正：`octos-sandbox` 是平台助手二进制而非沙箱子系统（真沙箱是 `octos-agent::sandbox` 的六个文件）；`octos-web` 不含 Rust、不是 workspace 成员；不存在 harness crate，harness 是 `octos-agent` 内部的 `harness_errors`/`harness_events` 模块。其二，拓扑层数更新：旧稿的四层架构与核心 crate 数口径作废，v2 按 `[dependencies]` 依赖方向推导为 L0–L7 共 8 层加不计层数的能力层。其三，全书结构调整：Harness 独立成第 10 章，原第 10 章 bus 平移至第 11 章，第 16 章起为新增章。
