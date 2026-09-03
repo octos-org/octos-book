@@ -107,3 +107,13 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | 子账号继承 | sub-account inheritance | gateway ProfileConfig sections, ch14 |
 | parent-trust | parent-trust | mcp-serve stdio trust model, ch14 |
 | 编译期运行面 | compile-time runtime surface | feature gates, ch14 |
+| 消息总线 | message bus | octos-bus, ch11 |
+| 消息分片/切割 | message coalescing / splitting | coalesce.rs, ch11 |
+| 硬切 | hard cut | 5 级切割第 5 级, ch11 |
+| thread-bound streaming | thread-bound streaming | bound channel API, ch11 |
+| sticky map | sticky map | 被 bound API 取代的旧 thread 恢复路径, ch11 |
+| durable commit observer | durable commit observer | MessageCommitObserver, ch11 |
+| child-session contract | child-session contract | ChildSessionContract, ch11 |
+| 长轮询 | long polling | Telegram/Matrix User, ch11 |
+| 百分号编码 | percent-encoding | encode_path_component, ch11 |
+| write-then-rename | write-then-rename | 整会话原子重写, ch11 |
