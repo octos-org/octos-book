@@ -46,3 +46,14 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | 单一事实源 | single source of truth | core boundary rule |
 | 会话路由键 | session routing key | SessionKey |
 | 截断报告 | truncation report | TruncationReport |
+| Provider 注册表 | provider registry | ch03, model-name auto-detection |
+| 对冲竞赛 | hedge racing | AdaptiveRouter Hedge mode |
+| 探针策略 | probe policy | AdaptiveRouter, default 10%/60s |
+| 凭据池 | credential pool | ch03 3.3.4 / 3.7, M6.5 |
+| 内容分类器 | content classifier | Cheap/Strong tier heuristics |
+| 模型目录 | model catalog | ModelCatalog, model_catalog.json |
+| 容错链 | fault-tolerance chain | three tiers, two assembly options |
+| 故障转移 | failover | |
+| 缓存经济学 | cache economics | ch03 3.6, f3aa07f0 |
+| 模型车道 | model lanes | per-topic lane routing, RFC-3 |
+| 本地窗口探测 | local window probing | #2135, 10022387 |
