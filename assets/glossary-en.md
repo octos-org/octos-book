@@ -87,16 +87,14 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | 实体库 | entity bank | two-level prompt injection, ch04 |
 | 写入闸 / 渲染闸 | write gate / render gate | guard.rs, ch04 |
 | 优雅降级 | graceful degradation | BM25 without embeddings, ch04 |
-| 声明式校验器 | declarative validator | ch10 pillar one, ValidatorSpec |
-| 事件 ABI | event ABI | ch10 pillar two, octos.harness.event.v1 |
-| 耐久类型 | durable type | ch10 five serialized schema_version types |
-| 版本护栏 | version guardrail | ch10 check_supported |
-| 信封 | envelope | HarnessEvent wire wrapper |
-| 本地 sink 传输 | local sink transport | OCTOS_EVENT_SINK JSONL channel |
-| 部分交付 | partial delivery | Required::Soft contracts |
-| 证据留存 | evidence retention | validator-evidence/ directory |
-| starter 脚手架 | starter scaffold | app-skills/harness-starter-* |
-| 生命周期点 | lifecycle point | HookEvent eleven mount points |
-| 会话隔离 | session isolation | hooks breaker state keys, #2153 |
-| 去抖窗口 | debounce window | after-event coalescing, hooks.rs |
-| 反馈通道 | feedback channel | hook exit 1 diagnostics into model context |
+| skill package | skill package | SKILL.md + manifest.json 目录形态, ch09 |
+| runtime manifest | runtime manifest | plugins/manifest.rs 热路径结构, ch09 |
+| verified copy | verified copy | SHA-256 校验后落盘副本, ch09 |
+| fail-soft | fail-soft | MCP 启动逐 server 连接失败跳过, ch09 |
+| fail-safe | fail-safe | concurrency 未知值落 Exclusive, ch09 |
+| layered view | layered view | 技能目录分层视图, ch09 |
+| auto-backgrounding | auto-backgrounding | spawn_only 运行时语义, ch09 |
+| connection path | connection path | stdio / HTTP / OAuth 三接入, ch09 |
+| configuration lane | configuration lane | mcp_servers / sub_providers, ch09 |
+| 名称保护 | name protection | PROTECTED_NAMES, ch09 |
+| 传输存活 | transport liveness | registry 持有 MCP 传输, ch09 |
