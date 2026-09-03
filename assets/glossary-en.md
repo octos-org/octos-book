@@ -21,7 +21,7 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | 租约 | lease | |
 | 事实表 | facts table | `assets/chNN-facts.md` |
 | 统稿 | final pass | |
-| 双环 | double loop | outer + inner loop collectively |
+| 双环 | dual loop | outer + inner loop collectively |
 | 契约测试 | contract test | mechanical check vs snapshot/subprocess |
 | 断路器 | circuit breaker | provider fault-tolerance chain |
 | 凭据轮换 | credential rotation | provider fault-tolerance chain |
@@ -73,3 +73,17 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | 情节记忆 | episodic memory | memory.rs, ch05 |
 | 落盘 | persist to disk | checkpoint wording, ch05 |
 | 器官级入口 | organ-level entry | pub(crate)/pub(super) entries, ch05 |
+| 混合搜索 | hybrid search | BM25 + HNSW, ch04 |
+| 倒排索引 | inverted index | BM25 term postings, ch04 |
+| 词频 / 文档频率 | term frequency / document frequency | tf / df in BM25, ch04 |
+| 前向兼容 | forward compatibility | schema_version, ch04 |
+| 墓碑 | tombstone | HNSW soft delete, ch04 |
+| 稠密累加器 / 稀疏累加器 | dense accumulator / sparse accumulator | #1855 hot path, ch04 |
+| 三级降级 | three-tier fallback | hybrid → BM25-only → DB scan, ch04 |
+| 降级可见性 | fallback visibility | VectorCoverage, ch04 |
+| 经验记录 | Episode | octos-memory unit of experience, ch04 |
+| 长期记忆 | long-term memory | MEMORY.md, ch04 |
+| 每日笔记 | daily notes | YYYY-MM-DD.md, ch04 |
+| 实体库 | entity bank | two-level prompt injection, ch04 |
+| 写入闸 / 渲染闸 | write gate / render gate | guard.rs, ch04 |
+| 优雅降级 | graceful degradation | BM25 without embeddings, ch04 |

@@ -6,7 +6,7 @@ AI agents are moving from demos to production. Most agent framework source you r
 
 octos is an AI agent operating system built in Rust. The book tracks the main branch: roughly 700,000 lines of Rust across a 26-crate workspace, with `deny(unsafe_code)` at the workspace level. It is not a call-graph wrapper rewritten in yet another language; from its first line it was designed for multi-tenant isolation, production reliability, and scalable concurrency. The provider fault-tolerance chain ships credential rotation and circuit breakers (see Chapter 3); sandboxing and permissions are fail-closed (see Chapter 7); long-running tasks get an event ledger and resumption scheduling (see Chapter 12).
 
-The second edition expands the book from 14 chapters to 21 and adds a fourth part on the double loop: how the outer loop (one supervising strong model plus an operations surface) drives the inner loop (a swarm of working models). Three chapters cover octoscode, the terminal client; OctoLoop outer protocol OLP v2; and herdr, the operations tool. Together they answer one question: when cheap models do the work in the inner loop, who reviews the result, and who takes over when they fail.
+The second edition expands the book from 14 chapters to 21 and adds a fourth part on the dual loop: how the outer loop (one supervising strong model plus an operations surface) drives the inner loop (a swarm of working models). Three chapters cover octoscode, the terminal client; OctoLoop outer protocol OLP v2; and herdr, the operations tool. Together they answer one question: when cheap models do the work in the inner loop, who reviews the result, and who takes over when they fail.
 
 This book is not a user manual. It is a dissection of engineering decisions: each chapter digs into one subsystem, shows why it was designed that way, which alternatives were weighed, and what the choice cost. Every claim carries a source reference, so you can walk into the repository and check it yourself.
 
@@ -31,7 +31,7 @@ Path B: senior Rust developer (here for the architecture and concurrency of a la
 
 Path C: AI application developer (from calling the API to understanding the runtime's internals)
 > Ch1 → Ch5 → Ch6 → Ch14 → Ch19 → Ch20 → Ch21
-> Ch5-6 answer what actually happens to the message you send; Ch14 settles runtime modes and configuration, and then you enter the double-loop part: the octoscode client (Ch19), the outer protocol OLP v2 (Ch20), and operations practice with herdr (Ch21). Ch18's goal/peer mechanisms are the server-side prerequisite for Ch20; read it first if time allows. Skipping implementation-detail sidebars costs nothing.
+> Ch5-6 answer what actually happens to the message you send; Ch14 settles runtime modes and configuration, and then you enter the dual-loop part: the octoscode client (Ch19), the outer protocol OLP v2 (Ch20), and operations practice with herdr (Ch21). Ch18's goal/peer mechanisms are the server-side prerequisite for Ch20; read it first if time allows. Skipping implementation-detail sidebars costs nothing.
 
 Path D: octos contributor (about to file your first PR against the repository)
 > The whole book in order, plus Appendix A and Appendix E
@@ -118,7 +118,7 @@ Version baselines: octos main repository main @ `9c157101` (figures gathered 202
 
 May this book leave you with more than an understanding of octos: a yardstick for judging agent infrastructure. Whenever you read about any agent system, carry four questions:
 
-- Where is the security boundary: which process, which syscall, which line of code enforces it?
-- Who enforces the protocol: the compiler, the runtime, a contract test, or a document that merely states it?
-- Can state be recovered: after a crash, which checkpoint does the restart resume from, and which work is lost?
-- Where do errors go: swallowed, logged, reported, or silently retried?
+- Where is the security boundary?
+- Who enforces the protocol?
+- Can state be recovered?
+- Where do errors go?
