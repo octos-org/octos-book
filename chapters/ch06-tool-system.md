@@ -320,5 +320,3 @@ RFC-0(commit `172fb2be`,#1289)删 LRU,不是因为它坏了,而是因为它解�
 ## 版本演化说明
 
 本章基线为 octos 源码 commit `9c157101`(2026-09-03 实测,main 分支)。行号与结构以 `assets/ch06-facts.md`(commit `552be31`)为准,关键行号均经亲测复核。历史注记:LRU 工具延迟激活与 `activate_tools` 已于 RFC-0(`172fb2be`,#1289)删除;`crates/octos-cli/src/api/coding_tool_contract.rs` 的 `deferred` 状态词汇为前端兼容保留,不代表机制存续。
-
-补深度记录:初稿正文 4,565 汉字,本轮补写至约 5,900。新增段落五处:能力域与 `TOOL_GROUPS` 策略分组两套坐标系的关系(`crates/octos-agent/src/tools/policy.rs:187`、`group:delegated` 的超集不变量与守护测试)、按域拆文件的设计动机(域内共享不变量、域间隔离威胁模型)、`ToolRegistry` 字段的沉积顺序与 `specs()` 排序的缓存契约(`crates/octos-agent/src/tools/registry.rs:179`、`:746`)、`clear_spawn_only` 的父子方向性与 `task_handle` 信封(`crates/octos-agent/src/tools/registry.rs:355`、`:388`)、`estimate_json_size` 的非分配设计(`crates/octos-agent/src/tools/registry.rs:95-119`)。新增行号均在本轮亲测。
