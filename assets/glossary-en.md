@@ -57,3 +57,19 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | 缓存经济学 | cache economics | ch03 3.6, f3aa07f0 |
 | 模型车道 | model lanes | per-topic lane routing, RFC-3 |
 | 本地窗口探测 | local window probing | #2135, 10022387 |
+| 检查点 | checkpoint | #27e budget checkpoint, ch05 |
+| 续跑 | continuation | goal layer, master_continuation_scheduler |
+| 错误桶 | error bucket | 16 typed retry buckets, ch05 |
+| 宽限 | grace | LoopDecision::Grace, once globally |
+| 循环自愈 | loop self-healing | #2172 / #2174, ch05 |
+| 退化检测 | degeneration detection | detection.rs, ch05 |
+| 变更轴 | axis of change | module split rationale, ch05 |
+| 五道闸 | five budget gates | check_budget order, ch05 |
+| 写权 | write ownership | #27h, result.md vs result.checkpoint.md |
+| 主线九模块 | nine core modules | ch05 module map |
+| 支线模块 | supporting modules | ch05 module map |
+| 压缩双模块 | the two compaction modules | compaction.rs / loop_compaction.rs |
+| 有界恢复 | bounded recovery | nudge-and-retry ≤2, ch05 |
+| 情节记忆 | episodic memory | memory.rs, ch05 |
+| 落盘 | persist to disk | checkpoint wording, ch05 |
+| 器官级入口 | organ-level entry | pub(crate)/pub(super) entries, ch05 |
