@@ -21,3 +21,9 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | 租约 | lease | |
 | 事实表 | facts table | `assets/chNN-facts.md` |
 | 统稿 | final pass | |
+| 双环 | double loop | outer + inner loop collectively |
+| 契约测试 | contract test | mechanical check vs snapshot/subprocess |
+| 断路器 | circuit breaker | provider fault-tolerance chain |
+| 凭据轮换 | credential rotation | provider fault-tolerance chain |
+| fail-closed | fail-closed | sandbox/permission posture |
+| 借用检查器 | borrow checker | Rust |
