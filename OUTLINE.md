@@ -254,4 +254,4 @@
 
 ## 英文版(book-en)同步状态
 
-2026-09-03 立项(`specs/translation-en.spec.md`):v1 英文旧稿已下线,`book-en/src/SUMMARY.md` 按 v2 结构重排,未译章节为占位页;按批次 G1(前言 + Ch1-5)→ G2(Ch6-10)→ G3(Ch11-15)→ G4(Ch16-21)→ G5(附录 A/B/C/D/F)翻译重写,附录 E 沿用 v1 英文。
+2026-09-03 完成(`specs/translation-en.spec.md`,总结 `assets/translation-en-summary.md`):按批次 G1(前言 + Ch1-5)→ G2(Ch6-10)→ G3(Ch11-15)→ G4(Ch16-21)→ G5(附录 A/B/C/D/F)翻译重写,附录 E 沿用 v1 英文。

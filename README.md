@@ -9,7 +9,7 @@ Building an AI Agent OS: Architecture and Implementation of octos
 | 版本 | 状态 | 基线 |
 |---|---|---|
 | 中文版 v2 | 完成（2026-09-03） | octos main `9c157101`、octoscode `1129fa33`、herdr `feat/octoscode-agent` `fefe5c4f` |
-| 英文版 | 与 v2 同步翻译中，未译章节为占位页 | 同上 |
+| 英文版 | 完成（2026-09-03），与 v2 逐章结构镜像 | 同上 |
 
 ## 目录
 
