@@ -33,3 +33,5 @@
 - [Ch1] 第 19/161 行 `*crates/octos-bus/src/cli_channel.rs` 是 glob `*_channel.rs` 被全路径替换弄坏的残骸(ch01-en-review 发现);中文 chapters + book/src 镜像 + 英文 book-en 三处同改,修法 sed 's|\*crates/octos-bus/src/cli_channel\.rs|*_channel.rs|g'(第 161 行已带目录前缀,第 19 行得到「17 个 `*_channel.rs`」)。
 
 - [Ch6] 章末「补深度记录:初稿正文 4,565 汉字…」(chapters/ch06-tool-system.md:324)是写作过程记录,删除该段;book/src/part2/ch06.md 镜像与 book-en/src/part2/ch06.md 的「Depth-addition record」段同删。全书仅此一处(grep 补深度记录 chapters/ch*.md)。
+
+- [Appendix D] 章首第 11 行「交叉点在 D.7 说明」指错节:与 14.7 分工的交叉点实际在 D.6(「与第 14 章 14.7 节的分工」),D.7 是「没有 [features] 的 crate」。英文版(appendixd-en)已按 D.6 写,中文 chapters/appendix-d-feature-flags.md:11 与 book/src 镜像建议改 D.7→D.6。
