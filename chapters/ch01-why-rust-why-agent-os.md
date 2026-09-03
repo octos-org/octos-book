@@ -16,7 +16,7 @@ octos 不是 chatbot 框架，而是一个多租户 AI Agent 操作系统：同�
 
 设想一个真实场景：租户 A 的 Agent 在总结一篇网页时被 prompt 注入，恶意指令试图读取租户 B 的会话历史，或者执行 `rm -rf /`。在多租户环境里这不是理论风险。octos 的攻击面可以从事实表直接量化：`crates/octos-agent/src/tools/` 下有 59 个工具源文件（口径：`ls crates/octos-agent/src/tools/*.rs | wc -l`）。注意这是源文件数，不是工具数，其中包含 `crates/octos-agent/src/tools/mod.rs`、`crates/octos-agent/src/tools/registry.rs`、`crates/octos-agent/src/prompt_guard.rs` 这类框架文件。
 
-每个真正暴露给 LLM 的工具（`shell`、`browser`、`web_fetch`、`write_file`、`spawn` 等）都是一条独立的攻击路径。再加上 `crates/octos-bus/src/` 下的 **17 个 `*crates/octos-bus/src/cli_channel.rs` 频道源文件**（Telegram、Discord、Slack、WhatsApp、飞书、邮件、Matrix、企业微信、钉钉、QQ Bot、Twilio、Line 等；其中 `crates/octos-bus/src/api_channel.rs` 与 `crates/octos-bus/src/cli_channel.rs` 是两个内部通道，并非全部对外），平台在物理上就是「一张接满了外部消息网络的、能执行代码的图」。每接入一个频道，就多一个入站消息的信任边界；每注册一个工具，就多一个出站副作用的通道。
+每个真正暴露给 LLM 的工具（`shell`、`browser`、`web_fetch`、`write_file`、`spawn` 等）都是一条独立的攻击路径。再加上 `crates/octos-bus/src/` 下的 **17 个 `crates/octos-bus/src/*_channel.rs` 频道源文件**（Telegram、Discord、Slack、WhatsApp、飞书、邮件、Matrix、企业微信、钉钉、QQ Bot、Twilio、Line 等；其中 `crates/octos-bus/src/api_channel.rs` 与 `crates/octos-bus/src/cli_channel.rs` 是两个内部通道，并非全部对外），平台在物理上就是「一张接满了外部消息网络的、能执行代码的图」。每接入一个频道，就多一个入站消息的信任边界；每注册一个工具，就多一个出站副作用的通道。
 
 Agent 场景的安全隔离比传统 Web 服务难，原因有三：
 
@@ -158,7 +158,7 @@ pub trait Tool: Send + Sync {
 | crate 目录总数 | 26 | `ls crates \| wc -l`；= 23 个 `octos-*` crate + `app-skills` + `platform-skills` + `octos-web` 三个目录 |
 | Rust 总行数 | 700,915 | `find crates -name '*.rs' \| xargs wc -l \| tail -1`；仅统计 `.rs` 文件，`octos-web` 计 0 |
 | workspace 成员数 | 38 | 根 `Cargo.toml` `members` 列表长度；26 目录中 `app-skills`/`platform-skills` 是多 crate 目录（各含 14/1 个成员），23+14+1=38，`octos-web` 不是成员 |
-| 消息频道源文件 | 17 | `ls crates/octos-bus/src/*crates/octos-bus/src/cli_channel.rs \| wc -l` |
+| 消息频道源文件 | 17 | `ls crates/octos-bus/src/crates/octos-bus/src/*_channel.rs \| wc -l` |
 | 工具源文件 | 59 | `ls crates/octos-agent/src/tools/*.rs \| wc -l`；是文件数不是工具数（含 `crates/octos-agent/src/tools/mod.rs`、`crates/octos-agent/src/tools/registry.rs`、测试等框架文件） |
 
 26 与 38 的关系值得单独强调：目录数 ≠ 成员数 ≠ 核心库数。`crates/app-skills/` 没有顶层 `Cargo.toml`，它是一个装着 14 个独立二进制 crate 的目录；`platform-skills/` 装 1 个（voice）；`octos-web` 连 Rust 都没有。把这四个数字混为一谈，是外部读者对 octos 结构最常见的第一重误解。
