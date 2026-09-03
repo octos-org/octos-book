@@ -20,7 +20,7 @@ estimate: 6d
 - 章首锚点译为 `> **Positioning**:`,章末版本演化说明译为 `> **Version note**:`;「工程决策侧栏」译为 `> **Engineering decision**:`;「延伸阅读」`## Further reading`,「思考题」`## Exercises`;跨章引用 `详见第 N 章` → `see Chapter N`。
 - 术语保留英文原文:Rust、crate、trait、agent、harness、spec、goal、peer、lane、OLP、blackboard(黑板)、outer loop / inner loop(外环/内环)、master、operator、Fleet、Swarm、Goal、Peer、Provider、Channel、Session。术语表见 `assets/glossary-en.md`(译者维护,首章起建)。
 - 英文规范:`.octos/skills/trilingual-collab-en.md` 全部条款(禁用词零命中、em dash ≤2、无 colon reveal、无 recap ending、无 bold 撒粉);主动语态、结论前置。
-- 车道:B `chNN-en`(strong,glm-5.3)翻译重写 → C1 `chNN-en-check`(cheap,glm-5.3-flash)跑 `~/.octos/outer/verify-en.sh` 与数字/引用集合比对,计数附命令输出 → C2 `chNN-en-review`(strong)英文去味与技术读校(不改事实)。不设 A 车道(事实来自中文定稿)。
+- 车道:B `chNN-en`(strong,glm-5.3)翻译重写 → C1 `chNN-en-check`(cheap,glm-5.3-flash)跑 `scripts/verify-en.sh` 与数字/引用集合比对,计数附命令输出 → C2 `chNN-en-review`(strong)英文去味与技术读校(不改事实)。不设 A 车道(事实来自中文定稿)。
 - 批次:G1 前言 + Ch1-5;G2 Ch6-10;G3 Ch11-15;G4 Ch16-21;G5 附录 A/B/C/D/F(附录 E 的 v1 英文保留,只核对与中文版一致)。并发 ≤6。
 - 提交:每章一个原子 commit,只含 `book-en/src/<path>.md`(及首章的 glossary);ACK 定式 `ACK(done): <hash>;字数(英文词数)/引用集合相等/数字集合相等/禁用词 0/em dash/C1(+C2)问题计数/验证级别`。
 - 站点:`book-en/src/SUMMARY.md` 已按 v2 结构重写,未译章节为占位页;`cd book-en && mdbook build` 零警告是每次 commit 的硬门。
@@ -45,7 +45,7 @@ estimate: 6d
 
 场景: 结构镜像
   假设 中文版 chapters/chNN-*.md 与英文版 book-en/src/partX/chNN.md
-  当 运行 ~/.octos/outer/verify-en.sh <zh> <en>
+  当 运行 scripts/verify-en.sh <zh> <en>
   那么 标题数、代码块数、mermaid 数、表格行数相等
   并且 源码引用集合(路径:行号)完全相等
   并且 中文版正文出现的每个 ≥3 位数字都出现在英文版

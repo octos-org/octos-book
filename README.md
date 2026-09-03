@@ -31,12 +31,22 @@ cd book-en && mdbook serve -p 3001   # 英文版
 
 推送到 `main` 后由 `.github/workflows/deploy.yml` 构建并发布到 GitHub Pages（中文在站点根，英文在 `/en/`）。
 
+## 验收脚本
+
+```bash
+scripts/verify-chapter.sh chapters/ch16-fleet.md            # 中文章:引用路径/行号存在、锚点、去味指标、mermaid 边 vs Cargo 依赖、mdbook build
+scripts/verify-en.sh chapters/ch16-fleet.md book-en/src/part3/ch16.md   # 英文章:与中文版结构/引用/数字镜像
+```
+
+源码仓库默认取本仓库同级的 `../octos`、`../octoscode`、`../herdr`，可用 `OCTOS_ROOT` / `OCTOSCODE_ROOT` / `HERDR_ROOT` 覆盖。修订任一章后先跑对应脚本，再提交。
+
 ## 仓库结构
 
 ```
 chapters/        中文章节定稿（book/src 为逐字镜像）
 book/            中文版 mdbook
 book-en/         英文版 mdbook
+scripts/         验收脚本（verify-chapter.sh / verify-en.sh）
 specs/           每章的任务契约（agent-spec），含 project.spec.md 全书约束
 assets/          事实表、审查报告、统稿清单、术语表
 AGENTS.md        写作纪律、引用规则与内环车道分工

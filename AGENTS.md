@@ -72,7 +72,7 @@ Do not stop just to ask about:
 
 1. 源是 `chapters/<file>.md` 定稿,目标是 `book-en/src/<same path>.md`;英文版只维护这一份。
 2. 动笔前读 `.octos/skills/trilingual-collab-en.md`(禁用词、模式、约定)与 `assets/glossary-en.md`;新术语先加表再用。
-3. 母语重写,不逐句直译;但事实、数字、源码引用(路径:行号)、代码块、mermaid 边数与中文版逐一相同。自证命令:`~/.octos/outer/verify-en.sh chapters/<zh>.md book-en/src/<en>.md` 必须 0 FAIL。
+3. 母语重写,不逐句直译;但事实、数字、源码引用(路径:行号)、代码块、mermaid 边数与中文版逐一相同。自证命令:`scripts/verify-en.sh chapters/<zh>.md book-en/src/<en>.md` 必须 0 FAIL。
 4. 固定标签:`> **Positioning**:`(章首)、`> **Version note**:`(章末)、`> **Engineering decision**:`(侧栏)、`## Further reading`、`## Exercises`、`see Chapter N`。
 5. 不改中文版;发现中文版错误写进 `assets/final-pass.md` 交外环裁定。
 6. 每章 commit 只含本章英文文件(首章可含 glossary);`cd book-en && mdbook build` 零警告是硬门。
