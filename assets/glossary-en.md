@@ -98,21 +98,29 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | configuration lane | configuration lane | mcp_servers / sub_providers, ch09 |
 | 名称保护 | name protection | PROTECTED_NAMES, ch09 |
 | 传输存活 | transport liveness | registry 持有 MCP 传输, ch09 |
-| 会话 actor | session actor | one tokio task owns one session, ch12 |
-| 批次准入 | batch admission | Safe/Exclusive tool batch policy, ch12 |
-| 水位线 | watermark | last_sequence monotonic high-water mark, ch12 |
-| 信箱 | mailbox | actor message queue, ch12 |
-| 代 / epoch | epoch | daemon-start identity in Lease.owner_epoch, ch12 |
-| 唤醒 outbox | outbox | fleet kernel wakeups, fleet_wake.rs, ch12 |
-| 零 token 监视器 | zero-token monitor | monitor_runtime.rs, ch12 |
-| 进程隐喻 | process metaphor | peer ≈ process vs subagent ≈ thread, ch12 |
-| 收养 | adoption | Parked task reclaimed by reconnecting client, ch12 |
-| 租户隔离 | tenant isolation | four-layer model, ch15 |
-| 子账号 | sub-account | profile nesting, `{parent}--{sub}` |
-| 端口池 | port pool | SSH_PORT_START/END 6001-6999, ch15 |
-| 隧道 | tunnel | frp/frpc deployment path, ch15 |
-| 用量台账 | usage ledger | usage_ledger.rs, redb, ch15 |
-| 看门狗 | watchdog | monitor.rs restart loop, ch15 |
-| 自更新 | self-update | updater.rs, ch15 |
-| 运维面 | operations plane | metrics/SSE/alerting/update/doctor, ch15 |
-| 抽取 | extraction | crate split from octos-cli, ch15 |
+| 运行面 | runtime surface | ch14 five surfaces; preface uses "runtime modes" loosely |
+| 控制面 | control plane | serve convergence role, ch14 |
+| 热加载 | hot reload | ConfigWatcher, ch14 |
+| 分层默认值 | layered defaults | config_layer::apply, ch14 |
+| 单写者锁 | single-writer lock | fs2 flock, OCTOS_DATA_DIR_LOCKED, ch14 |
+| serve 门禁 | admission gates | --solo / --danger-full-access / --no-network, ch14 |
+| 子账号继承 | sub-account inheritance | gateway ProfileConfig sections, ch14 |
+| parent-trust | parent-trust | mcp-serve stdio trust model, ch14 |
+| 编译期运行面 | compile-time runtime surface | feature gates, ch14 |
+| 消息总线 | message bus | octos-bus, ch11 |
+| 消息分片/切割 | message coalescing / splitting | coalesce.rs, ch11 |
+| 硬切 | hard cut | 5 级切割第 5 级, ch11 |
+| thread-bound streaming | thread-bound streaming | bound channel API, ch11 |
+| sticky map | sticky map | 被 bound API 取代的旧 thread 恢复路径, ch11 |
+| durable commit observer | durable commit observer | MessageCommitObserver, ch11 |
+| child-session contract | child-session contract | ChildSessionContract, ch11 |
+| 长轮询 | long polling | Telegram/Matrix User, ch11 |
+| 百分号编码 | percent-encoding | encode_path_component, ch11 |
+| write-then-rename | write-then-rename | 整会话原子重写, ch11 |
+| keeper | keeper | server-side goal holder role, ch18 |
+| 任务契约 | brief | peer task contract file, ch18 |
+| 派生 | handoff | peer_handoff staging, ch18 |
+| 落盘顺序/暂存 | staging | stage_peer write protocol, ch18 |
+| 回流通道 | return channel | peer_findings/ledger_findings/open_escalations, ch18 |
+| 预算收尾 | wrap-up turn | GoalWrapUp, ch18 |
+| 栅栏分支 | fence branch | peer/<slug> branch in the clone, ch18 |
