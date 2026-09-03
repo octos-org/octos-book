@@ -87,10 +87,14 @@ Maintained by the translation lane. One English form per concept; add a row befo
 | 实体库 | entity bank | two-level prompt injection, ch04 |
 | 写入闸 / 渲染闸 | write gate / render gate | guard.rs, ch04 |
 | 优雅降级 | graceful degradation | BM25 without embeddings, ch04 |
-| 安全纵深 | defense in depth | ch07 |
-| 哨兵 | sentinel | NoSandbox / RefusingSandbox, ch07 |
-| 写围栏 | write fence | #1976 per-path fencing, ch07 |
-| 脱敏 | redaction | sanitize_tool_output, ch07 |
-| 降级 | degradation | Auto sandbox fallback, ch07 |
-| 审批 | approval | ApprovalPolicy, ch07 |
-| 允许表 | allowlist | NetworkGrant::Hosts, ch07 |
+| 工具结果占位符 | tool result placeholder | ToolResultPlaceholder, ch08 |
+| 分层压缩面 | tiered compaction surface | compaction_tiered.rs, ch08 |
+| 提取式摘要 | extractive summary | ExtractiveSummarizer, ch08 |
+| 保真度分级 | fidelity grades | Full/Truncate/Compact/Summary, ch08 |
+| 工作集钉住 | working-set pinning | pin_recent_files, ch08 |
+| 重物化 | rematerialization | recall tool, ch08 |
+| 预算感知读取 | budget-aware read | read_file range hint, ch08 |
+| 读去重 | read de-duplication | dedup_duplicate_reads, ch08 |
+| 上下文窗口压缩 | context compaction | ch08 umbrella term |
+| 提示层构建 | prompt layer assembly | PromptLayerBuilder, ch08 |
+| 消息注入 | steering injection | SteerBuffer, ch08 |
