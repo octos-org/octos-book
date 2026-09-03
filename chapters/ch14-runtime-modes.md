@@ -105,7 +105,7 @@ chat 也是三个参与分层默认值的命令之一（`LAYERED_COMMANDS` 里�
 
 第一，profile 与子账号继承是结构化的。Gateway 的多用户不是「每人一份顶层 config.json」，而是 `ProfileConfig`（`crates/octos-cli/src/profiles.rs:181`）承载结构化 sections：子账号继承父 profile 的 `config.llm` contract（`LlmProfileConfig`，`crates/octos-cli/src/profiles.rs:814`），缺省时继承 `search`、`deep_crawl` 等 sections，同时把父级 `env_vars` 作为 base 层（经 keychain 解析，`crates/octos-cli/src/commands/gateway/profile_factory.rs:108/149`）。旧稿中「子账号继承顶层 provider/model 字段」的写法已过时：顶层字段是 legacy 路径，结构化 sections 才是当前主路径。
 
-第二，gateway 是热加载的主要消费者。常驻进程改配置的成本最高（重启会中断所有频道），所以 `ConfigWatcher` 的事件循环主要服务这一面（见 14.6.4）。`GatewayCommand::execute`（`crates/octos-cli/src/commands/gateway/mod.rs:159`）→ `run_async`（`:178`）→ `Gateway::init`（`:226`）→ runtime 主循环 `run`（`crates/octos-cli/src/commands/gateway/gateway_runtime.rs:1789`），热加载状态（`system_prompt`、`max_history`、`config_rx`）挂在 GatewayRuntime 的状态里。
+第二，gateway 是热加载的主要消费者。常驻进程改配置的成本最高（重启会中断所有频道），所以 `ConfigWatcher` 的事件循环主要服务这一面（见 14.6.3）。`GatewayCommand::execute`（`crates/octos-cli/src/commands/gateway/mod.rs:159`）→ `run_async`（`:178`）→ `Gateway::init`（`:226`）→ runtime 主循环 `run`（`crates/octos-cli/src/commands/gateway/gateway_runtime.rs:1789`），热加载状态（`system_prompt`、`max_history`、`config_rx`）挂在 GatewayRuntime 的状态里。
 
 ---
 
