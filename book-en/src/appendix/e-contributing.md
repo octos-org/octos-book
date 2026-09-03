@@ -37,7 +37,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-These commands match `CLAUDE.md` and the baseline CI checks. Note that `cargo build --workspace` builds workspace members but does not automatically enable `octos-cli/api`. To run `octos serve`, build or install the CLI with the `api` feature enabled.
+These commands match `CLAUDE.md` and the baseline CI checks. `cargo build --workspace` builds workspace members but does not automatically enable `octos-cli/api`. To run `octos serve`, build or install the CLI with the `api` feature enabled.
 
 ## Local CLI Install
 
