@@ -81,10 +81,10 @@ digraph research {
 
 | 类型 | 运行时落点 | 关键属性 | 作用 |
 |------|-----------|---------|------|
-| `Codergen` | `crates/octos-pipeline/src/handler.rs:641`（impl 起） | `prompt` `model` `tools` `context_window` `max_output_tokens` | 派生完整子 Agent |
+| `Codergen` | `CodergenHandler`（`crates/octos-pipeline/src/handler.rs:359`，impl 起） | `prompt` `model` `tools` `context_window` `max_output_tokens` | 派生完整子 Agent |
 | `Shell` | `crates/octos-pipeline/src/handler.rs:1054` | `prompt` `timeout_secs` | 执行 shell 命令，但被验证规则封禁（见 13.2.2） |
 | `Gate` | `crates/octos-pipeline/src/handler.rs:1190` | `prompt` | 计算条件，不做人机等待 |
-| `Noop` | `crates/octos-pipeline/src/handler.rs:1226` | 无 | 透传输入 |
+| `Noop` | `NoopHandler`（`crates/octos-pipeline/src/handler.rs:1226`） | 无 | 透传输入 |
 | `Parallel` | `crates/octos-pipeline/src/executor.rs:2749` | `converge` | 对已有下游节点做静态 fan-out |
 | `DynamicParallel` | `crates/octos-pipeline/src/executor.rs:3122` | `prompt` `worker_prompt` `planner_model` `max_tasks` `converge` | 先规划任务，再动态 fan-out |
 | `ShellCheck` | `crates/octos-pipeline/src/handler.rs:1247` | `command` `timeout_secs` | 跑固定命令串，编译期锁死 |

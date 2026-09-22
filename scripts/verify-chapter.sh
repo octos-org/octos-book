@@ -11,16 +11,93 @@ ch,root=sys.argv[1],sys.argv[2]; s=open(ch,encoding='utf-8').read(); fail=0
 def bad(m): 
     global fail; fail+=1; print("FAIL:",m)
 # 1 refs
-refs=set(re.findall(r'((?:crates|octoscode/src|herdr/src)/[A-Za-z0-9_./-]+\.rs)(?::(\d+)(?:-(\d+))?)?',s))
+CITE=r'((?:crates|octoscode/src|herdr/src)/[A-Za-z0-9_./-]+\.rs)(?::(\d+)(?:-(\d+))?)?'
+refs=set(re.findall(CITE,s))
 ROOTS={'octoscode':os.environ['OCTOSCODE_ROOT'],'herdr':os.environ['HERDR_ROOT']}
-for p,a,b in sorted(refs):
+def srcpath(p):
     top=p.split('/')[0]
-    fp=os.path.join(ROOTS.get(top,root), p[len(top)+1:] if top in ROOTS else p)
+    return os.path.join(ROOTS.get(top,root), p[len(top)+1:] if top in ROOTS else p)
+for p,a,b in sorted(refs):
+    fp=srcpath(p)
     if not os.path.exists(fp): bad(f"path missing {p}"); continue
     n=sum(1 for _ in open(fp,encoding='utf-8',errors='ignore'))
     hi=int(b or a or 0)
     if hi and hi>n: bad(f"line out of range {p}:{a}-{b} (file has {n})")
 print(f"refs checked: {len(refs)}")
+# 1b symbol anchors: 行号引用邻近的反引号标识符须仍存在于被引文件——全文件消失=FAIL(符号灭绝),在但漂出 ±25 行=WARN(锚点漂移)
+IDENT=re.compile(r'`([^`]+)`')
+TOK=r'[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*(?:\.[A-Za-z_][A-Za-z0-9_]*)*'
+TOKEN=re.compile(r'^(%s)$'%TOK); CALL=re.compile(r'^(%s)\(\)$'%TOK); ASSIGN=re.compile(r'^(%s)\s*='%TOK)
+STOP={'null','none','some','ok','err','true','false','yes','no','on','off','self','todo'}
+HEX=re.compile(r'^[0-9a-f]{7,40}$')
+def idents(t):
+    t=t.strip()
+    for rx in (TOKEN,CALL,ASSIGN):
+        m=rx.match(t)
+        if m: return [m.group(1)]
+    return []
+def paren_group(line,s,e):
+    st=[]; best=None
+    for i,c in enumerate(line):
+        if c in '(（': st.append(i)
+        elif c in ')）' and st:
+            o=st.pop()
+            if o<s and e<=i and (best is None or o>best[0]): best=(o,i)
+    return best
+def ctx_idents(line,s,e):
+    toks=[(m.start(),m.end(),m.group(1)) for m in IDENT.finditer(line)]
+    out=[]
+    def gap_ok(ts,te):  # 分号/句号跨子句即不归属同一处引用
+        gap=line[te:s] if te<=s else line[e:ts]
+        return not re.search(r'[。；;]',gap)
+    pg=paren_group(line,s,e)
+    if pg:
+        o,c=pg
+        for ts,te,tt in toks:
+            if o<ts and te<=c and not (ts<=s<te) and gap_ok(ts,te): out+=idents(tt)
+            if te<=o and not line[te:o].strip(): out+=idents(tt)  # 紧邻括号组的标识符(中文「`sym`（cite）」与英文「`sym` (cite)」)
+    if '|' in line:
+        cells=[(m.start(),m.end()) for m in re.finditer(r'[^|]+',line)]
+        ci=next((i for i,(cs,ce) in enumerate(cells) if cs<=s<ce),None)
+        if ci is not None:
+            for i in ({ci,0} if line.lstrip().startswith('|') else {ci}):
+                cs,ce=cells[i]
+                for ts,te,tt in toks:
+                    if cs<=ts and te<=ce and not (ts<=s<te) and gap_ok(ts,te): out+=idents(tt)
+    seen=set(); res=[]
+    for t in out:
+        seg=re.split(r'::|\.',t)[-1]
+        if len(seg)<3 or seg.lower() in STOP or HEX.match(seg) or t in seen: continue
+        seen.add(t); res.append(t)
+    return res
+WIN=25; checked=skipped=drift=0; srccache={}
+for ln,line in enumerate(s.splitlines(),1):
+    for m in re.finditer(CITE,line):
+        p,a,b=m.group(1),m.group(2),m.group(3)
+        if not a: continue
+        fp=srcpath(p)
+        if not os.path.exists(fp): continue
+        cands=ctx_idents(line,m.start(),m.end())
+        if not cands: skipped+=1; continue
+        if fp not in srccache:
+            L=open(fp,encoding='utf-8',errors='ignore').read().splitlines(); srccache[fp]=(L,'\n'.join(L))
+        L,full=srccache[fp]
+        lo,hi2=max(1,int(a)-WIN),min(len(L),int(b or a)+WIN)
+        win='\n'.join(L[lo-1:hi2]); found=[]; inwin=False
+        for t in cands:
+            seg=re.split(r'::|\.',t)[-1]; pat=r'\b%s\b'%re.escape(seg)
+            if re.search(pat,full):
+                found.append(t)
+                if re.search(pat,win): inwin=True
+        checked+=1
+        # 保守语义:任一候选标识符仍在文件中即不算灭绝(宁漏报不误报)
+        if not found:
+            bad(f"symbol vanished {p}:{a} (context ids: {', '.join(cands)})")
+        elif not inwin:
+            drift+=1; seg=re.split(r'::|\.',found[0])[-1]
+            at=next(i for i,l in enumerate(L,1) if re.search(r'\b%s\b'%re.escape(seg),l))
+            print(f"WARN: symbol drifted {p}:{a} — {found[0]} now at line {at}")
+print(f"symbol anchors: checked {checked}, skipped {skipped} (no identifier), drift {drift}")
 # 2 anchors
 for k in ['> **定位**','版本演化','延伸阅读','思考题','```mermaid']:
     if k not in s: bad(f"missing {k}")
@@ -60,6 +137,9 @@ if edges:
         else: bad(f"mermaid edge not in Cargo deps: {a}-->{b}")
     print(f"mermaid edges checked: {len(edges)}, ok {okc}")
 print("RESULT:", "PASS" if fail==0 else f"{fail} FAIL(s)")
+sys.exit(1 if fail else 0)
 PY
+rc=$?
 # 6 mdbook build must pass (run from book repo root if present)
-if [ -d "$BOOK/book" ] && command -v mdbook >/dev/null; then (cd "$BOOK/book" && mdbook build >/dev/null 2>&1 && echo "mdbook build: PASS" || echo "FAIL: mdbook build"); fi
+if [ -d "$BOOK/book" ] && command -v mdbook >/dev/null; then (cd "$BOOK/book" && mdbook build >/dev/null 2>&1 && echo "mdbook build: PASS" || { echo "FAIL: mdbook build"; rc=1; }); fi
+exit $rc

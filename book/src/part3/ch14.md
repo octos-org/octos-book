@@ -35,7 +35,7 @@ match self {
 
 | 运行面 | 入口 | 规模 | 首行文档摘要 | 关键符号 |
 |---|---|---|---|---|
-| chat（单机会话） | `crates/octos-cli/src/commands/chat.rs` | 4,143 行 | interactive multi-turn conversation | `ChatCommand`:37、`execute`:1043、`run_chat_peer`:828 |
+| chat（单机会话） | `crates/octos-cli/src/commands/chat.rs` | 4,143 行 | interactive multi-turn conversation | `ChatCommand`:36、`execute`:745、`run_async`:775 |
 | gateway（多频道常驻） | `crates/octos-cli/src/commands/gateway/` | 7,595 行 | persistent messaging daemon | `GatewayCommand`:45、`Gateway::init`:226、runtime `run`:1789 |
 | serve（控制面 + `--stdio`） | `crates/octos-cli/src/commands/serve.rs` | 2,849 行 | start the REST API server | `ServeCommand`:320、`execute`:539、`run_async`:549、`build_router`:1778 |
 | mcp-serve（协议服务） | `crates/octos-cli/src/commands/mcp_serve.rs` | 1,138 行 | M7.2 — octos mcp-serve | `McpTransport`:72、`McpServeCommand`:79、`run_session`:485 |
@@ -91,11 +91,11 @@ flowchart LR
 
 ## 14.2 chat：单机会话面
 
-`octos chat` 是最接近用户直觉的面：一个终端里的多轮对话。`ChatCommand`（`crates/octos-cli/src/commands/chat.rs:37`）支持 `--cwd`、`--provider`、`--model`、`--max-iterations`、`--verbose` 等覆盖项；`execute`（`crates/octos-cli/src/commands/chat.rs:1043`）构造 Tokio 多线程运行时后进入会话循环；`run_chat_peer`（`crates/octos-cli/src/commands/chat.rs:828`）是真正的对话驱动逻辑，Agent Loop 的展开见第 5 章，此处不重复。
+`octos chat` 是最接近用户直觉的面：一个终端里的多轮对话。`ChatCommand`（`crates/octos-cli/src/commands/chat.rs:36`）支持 `--cwd`、`--provider`、`--model`、`--max-iterations`、`--verbose` 等覆盖项；`execute`（`crates/octos-cli/src/commands/chat.rs:745`）构造 Tokio 多线程运行时后进入会话循环；`run_async`（`crates/octos-cli/src/commands/chat.rs:775`）是真正的对话驱动逻辑，Agent Loop 的展开见第 5 章，此处不重复。
 
 chat 的价值在于它是最薄的验证面：配置解析、Provider 构造、工具注册、沙箱策略在这一层全部生效，但没有任何网络暴露。诊断配置问题时，先在 chat 里复现，再排查 gateway 或 serve，是成本最低的路径。
 
-chat 也是三个参与分层默认值的命令之一（`LAYERED_COMMANDS` 里的 `"chat"`）：`config.cli.chat` 里预置的 `--provider`、`--model` 等默认值，会在用户未显式给参数时生效。这让「这台机器上 `octos chat` 默认走哪个模型」成为一份可提交进版本库的配置，而不是每个人 shell 历史里的别名。`run_chat_peer`（`crates/octos-cli/src/commands/chat.rs:828`）与 gateway/serve 使用同一套 Agent 装配，所以第 5 章讲的循环行为在 chat 里的观察结果可以直推到其他面。
+chat 也是三个参与分层默认值的命令之一（`LAYERED_COMMANDS` 里的 `"chat"`）：`config.cli.chat` 里预置的 `--provider`、`--model` 等默认值，会在用户未显式给参数时生效。这让「这台机器上 `octos chat` 默认走哪个模型」成为一份可提交进版本库的配置，而不是每个人 shell 历史里的别名。`run_async`（`crates/octos-cli/src/commands/chat.rs:775`）与 gateway/serve 使用同一套 Agent 装配，所以第 5 章讲的循环行为在 chat 里的观察结果可以直推到其他面。
 
 ---
 
